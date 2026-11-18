@@ -8,7 +8,7 @@ import org.junit.Test
 
 class VpnSubscriptionParsingTest {
     private val vless = "vless://11111111-2222-3333-4444-555555555555@example.com:443?security=tls&sni=example.com#Server%20A"
-    private val trojan = "trojan://pass@example.org:443#Server B"
+    private val trojan = "trojan://pass@example.org:443#Server%20B"
 
     @Test fun plainHttpsUrlIsASubscription() {
         assertEquals("https://panel.example/sub/abc123",

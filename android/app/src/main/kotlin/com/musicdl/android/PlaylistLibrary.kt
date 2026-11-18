@@ -174,7 +174,7 @@ internal fun PlaylistLibrary(state: MusicUiState, model: SearchViewModel, onClos
                 Column {
                     OutlinedTextField(link, { link = it.take(500) }, singleLine = true,
                         label = { Text("Ссылка на плейлист") }, enabled = !state.isImporting)
-                    Text("Яндекс: публичные ссылки без токена. VK: нужен подключённый аккаунт. Spotify: перенос по доступным метаданным. Файлы найдём автоматически.",
+                    Text("Яндекс: публичные ссылки без токена. Spotify: перенос по доступным метаданным. Файлы найдём автоматически.",
                         Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically) {

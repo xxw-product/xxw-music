@@ -80,10 +80,6 @@ class LibraryStore(context: Context) {
         set(value) { prefs.edit().putInt("auto_limit", value.coerceIn(10, 200)).apply() }
 
     /** Optional per-source credentials. Kept out of any public asset and never logged. */
-    var vkToken: String
-        get() = prefs.getString("vk_token", "").orEmpty()
-        set(value) { prefs.edit().putString("vk_token", value.trim()).apply() }
-
     var spotifyToken: String
         get() = prefs.getString("spotify_sync_token", "").orEmpty()
         set(value) { prefs.edit().putString("spotify_sync_token", value.trim()).apply() }

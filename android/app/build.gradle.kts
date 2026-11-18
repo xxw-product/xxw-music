@@ -1,24 +1,9 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
-
-// VK ID configuration is read from local.properties so the protected key is not
-// committed into the source tree. Create/update local.properties with:
-// VKIDClientID=54906914
-// VKIDClientSecret=<protected key from VK ID cabinet>
-val localProperties = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.isFile) {
-        file.inputStream().use { input -> load(input) }
-    }
-}
-val vkIdClientId = localProperties.getProperty("VKIDClientID", "54906914")
-val vkIdClientSecret = localProperties.getProperty("VKIDClientSecret", "MISSING_VKID_CLIENT_SECRET")
 
 android {
     namespace = "com.musicdl.android"
@@ -30,14 +15,6 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "1.0"
-        addManifestPlaceholders(
-            mapOf(
-                "VKIDClientID" to vkIdClientId,
-                "VKIDClientSecret" to vkIdClientSecret,
-                "VKIDRedirectHost" to "vk.ru",
-                "VKIDRedirectScheme" to "vk$vkIdClientId",
-            )
-        )
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -76,7 +53,6 @@ dependencies {
     val libv2rayAar = file("libs/libv2ray.aar")
     if (libv2rayAar.exists()) implementation(files(libv2rayAar))
     implementation(libs.okhttp)
-    implementation("com.vk.id:vkid:2.7.3")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

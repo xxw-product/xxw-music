@@ -98,7 +98,6 @@ data class MusicUiState(
     val importReport: YandexImportReport? = null,
     val isImporting: Boolean = false,
     val importProgress: String = "",
-    val vkToken: String = "",
     val serviceConnecting: Boolean = false,
     val serviceStatus: String = "",
     val linkImportResult: String? = null,
@@ -222,7 +221,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             downloadCovers = downloads.downloadCovers,
             downloadLyrics = downloads.downloadLyrics,
             downloadClips = downloads.downloadClips,
-            vkToken = library.vkToken,
             yandexToken = library.yandexToken,
             qobuzAppId = library.qobuzAppId,
             qobuzAppSecret = library.qobuzAppSecret,
@@ -458,10 +456,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         workDir = outputDir.absolutePath,
         logger = logger,
         defaultSearchCookies = buildMap {
-            library.vkToken.takeIf { it.isNotBlank() }?.let { put("vk_access_token", it) }
-            runCatching {
-                Settings.Secure.getString(getApplication<Application>().contentResolver, Settings.Secure.ANDROID_ID)
-            }.getOrNull()?.takeIf { it.isNotBlank() }?.let { put("vk_device_id", it) }
             library.yandexToken.takeIf { it.isNotBlank() }?.let { put("yandex_token", it) }
             library.qobuzAppId.takeIf { it.isNotBlank() }?.let { put("qobuz_app_id", it) }
             library.qobuzAppSecret.takeIf { it.isNotBlank() }?.let { put("qobuz_app_secret", it) }
@@ -945,43 +939,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
         _messages.tryEmit("Удалено · освобождено ${DownloadStore.sizeLabel(freed)}")
-    }
-
-    fun setVkToken(token: String) {
-        library.vkToken = token
-        _state.update { it.copy(vkToken = token.trim()) }
-    }
-
-    /** After a successful VK sign-in the catalog is switched on — otherwise it would stay hidden. */
-    fun connectVk(token: String) {
-        if (_state.value.serviceConnecting) return
-        val clean = token.trim()
-        if (clean.isBlank()) return
-        _state.update { it.copy(serviceConnecting = true, serviceStatus = "VK: проверяем доступ к музыке…") }
-        viewModelScope.launch {
-            try {
-                val error = withContext(Dispatchers.IO) {
-                    val client = com.musicdl.core.source.VKMusicClient(clientConfig().copy(
-                        defaultSearchCookies = mapOf("vk_access_token" to clean),
-                    ))
-                    try { client.checkAccess() } finally { client.close() }
-                }
-                if (error != null) {
-                    _state.update { it.copy(serviceStatus = error) }
-                    _messages.tryEmit(error)
-                } else {
-                    setVkToken(clean)
-                    if ("VKMusicClient" !in _state.value.activeSources) toggleSource("VKMusicClient")
-                    _state.update { it.copy(serviceStatus = "VK подключён · поиск и импорт готовы") }
-                    _messages.tryEmit("VK Музыка подключена")
-                }
-            } catch (cancelled: CancellationException) { throw cancelled
-            } catch (error: Exception) {
-                _state.update { it.copy(serviceStatus = "Не удалось проверить VK. Проверьте интернет и повторите") }
-            } finally {
-                _state.update { it.copy(serviceConnecting = false) }
-            }
-        }
     }
 
     fun setYandexToken(token: String) {
@@ -2091,16 +2048,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
         val label = when {
             link.contains("yandex", ignoreCase = true) -> "Яндекс"
-            link.contains("vk.com", ignoreCase = true) || link.contains("vk.ru", ignoreCase = true) -> "VK"
             else -> "Плейлист"
-        }
-        if (label == "VK") {
-            if (library.vkToken.isBlank()) return ParsedLink("VK", error = "Для VK нужен вход. Подключите VK в настройках → Музыкальные сервисы")
-            val vk = com.musicdl.core.source.VKMusicClient(clientConfig())
-            try {
-                val tracks = vk.parsePlaylist(link)
-                return ParsedLink("VK", tracks, vk.lastError)
-            } finally { vk.close() }
         }
         val tracks = MusicClient(listOf("YandexMusicClient"), clientConfig()).run {
             try {

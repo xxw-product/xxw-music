@@ -22,6 +22,46 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # The Xray core (libv2ray.aar) is built from android/xray and bundled into the APK, so the VPN
+      # works out of the box. The AAR is cached until the Xray sources change.
+      - name: Restore libv2ray.aar
+        id: aar
+        uses: actions/cache@v4
+        with:
+          path: android/app/libs/libv2ray.aar
+          key: libv2ray-${{ hashFiles('android/xray/AndroidLibXrayLite/**') }}
+
+      - name: Set up Go
+        if: steps.aar.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: android/xray/AndroidLibXrayLite/go.mod
+
+      - name: Set up Android SDK/NDK for gomobile
+        if: steps.aar.outputs.cache-hit != 'true'
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+      - name: Build libv2ray.aar
+        if: steps.aar.outputs.cache-hit != 'true'
+        working-directory: android/xray/AndroidLibXrayLite
+        run: |
+          yes | sdkmanager --install 'ndk;29.0.14206865'
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          mkdir -p assets data
+          bash gen_assets.sh download
+          cp -v data/*.dat assets/
+          gomobile init
+          go mod tidy
+          gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
+          mkdir -p ../../app/libs
+          cp libv2ray.aar ../../app/libs/libv2ray.aar
+
+      - name: Unit tests (VPN routing)
+        run: ./gradlew :app:testDebugUnitTest --tests 'com.musicdl.android.VpnRoutesTest'
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
 

@@ -605,8 +605,7 @@ private fun SourcesDialog(
                     text = if (state.isSearching) {
                         "Идёт поиск — новый набор применится к следующему запросу."
                     } else {
-                        "${RECOMMENDED_SOURCES.sortedBy(::sourceName).joinToString(", ") { sourceName(it) }}. " +
-                            "VK Музыка — только с токеном. Доступность зависит от сервиса и региона."
+                        "${RECOMMENDED_SOURCES.sortedBy(::sourceName).joinToString(", ") { sourceName(it) }}."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

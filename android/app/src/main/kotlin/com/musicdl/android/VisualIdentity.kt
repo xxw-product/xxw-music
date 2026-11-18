@@ -431,8 +431,6 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     var confirm by rememberSaveable { mutableStateOf(false) }
     var confirmCovers by rememberSaveable { mutableStateOf(false) }
-    var vkToken by rememberSaveable { mutableStateOf(state.vkToken) }
-    var showVkLogin by remember { mutableStateOf(false) }
     var yandexToken by rememberSaveable { mutableStateOf(state.yandexToken) }
     var qobuzAppId by rememberSaveable { mutableStateOf(state.qobuzAppId) }
     var qobuzSecret by rememberSaveable { mutableStateOf(state.qobuzAppSecret) }
@@ -606,14 +604,8 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
         SettingsGroup("Музыкальные сервисы") {
             Text("Ваша музыка — в одном месте", style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold)
-            Text("Яндекс: публичный плейлист переносится без входа. VK: подключите аккаунт — доступ к музыке проверим автоматически.",
+            Text("Яндекс: публичный плейлист переносится без входа.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FilledTonalButton(onClick = { showVkLogin = true }, enabled = !state.serviceConnecting,
-                modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Rounded.AccountCircle, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (state.serviceConnecting) "Проверяем VK…" else if (state.vkToken.isBlank()) "Подключить VK" else "Войти в VK заново")
-            }
             if (state.serviceStatus.isNotBlank()) Text(state.serviceStatus,
                 style = MaterialTheme.typography.bodyMedium)
             if (state.serviceConnecting) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -632,7 +624,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Text("Вставить ссылку")
             }
             OutlinedTextField(value = serviceLink, onValueChange = { serviceLink = it.take(1000) },
-                label = { Text("Ссылка на плейлист Яндекса или VK") },
+                label = { Text("Ссылка на плейлист Яндекса") },
                 supportingText = { Text("Можно вставить всё сообщение со ссылкой") },
                 modifier = Modifier.fillMaxWidth(), enabled = !state.isImporting)
             Button(onClick = { model.importPlaylistLink(serviceLink, download = true) },
@@ -777,22 +769,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             TextButton(onClick = { model.setSoundcloudClientId(soundcloudId) }) {
                 Text(if (soundcloudId.isBlank()) "Очистить client_id" else "Сохранить client_id")
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Text("VK Музыка", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = vkToken,
-                onValueChange = { vkToken = it },
-                label = { Text("Токен VK Музыки") },
-                singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Токен VK" },
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(enabled = vkToken.isNotBlank() && !state.serviceConnecting, onClick = { model.connectVk(vkToken) }) { Text("Проверить и подключить") }
-                TextButton(onClick = { showVkLogin = true }) { Text("Войти через VK") }
-            }
-            Text("VK Музыка включается только с токеном приложения, которому VK разрешил аудио: с 16.12.2016 публичный audio API закрыт, и обычный токен вернёт ошибку 15 «Access denied». Каталог читается от имени пользователя и не переопубликовывается; доступность зависит от региона и условий VK.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             Text("Ключи хранятся только на этом устройстве и никогда не попадают в экспорт медиатеки.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
@@ -863,10 +839,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
         Text("XXW MUSIC", style = MaterialTheme.typography.labelSmall, letterSpacing = 4.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    if (showVkLogin) VkLoginDialog(
-        onToken = { token -> vkToken = token; model.connectVk(token); showVkLogin = false },
-        onClose = { showVkLogin = false },
-    )
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("Сбросить мою волну?") },
         text = { Text("История прослушиваний, пропуски, дизлайки и настройки жанров будут сброшены. Любимые треки, подписки, плейлисты и скачанная музыка сохранятся и помогут собрать новую волну.") },
         confirmButton = { TextButton(onClick = { confirm = false; model.resetWave() }) { Text("Сбросить") } },

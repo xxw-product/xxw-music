@@ -12,6 +12,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.lang.reflect.Proxy
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.Executors
 
 /** Per-app VPN service. Android routes only this package into the TUN interface. */
@@ -58,19 +60,24 @@ class MusicVpnService : VpnService() {
             try {
                 val profile = VpnSubscriptionRepository(this).getProfiles().firstOrNull { it.id == profileId }
                     ?: error("Сервер больше не найден. Обновите список подписок.")
-                val config = XrayConfigFactory.build(profile)
-                val established = Builder()
+                // Resolve the server now, while the tunnel does not exist yet. Xray would otherwise
+                // resolve it through the tunnel, and its connection to the server would loop back in.
+                val serverAddresses = resolveServer(profile.server)
+                val serverIp = (serverAddresses.firstOrNull { it is Inet4Address } ?: serverAddresses.first())
+                    .hostAddress.orEmpty()
+                val config = XrayConfigFactory.build(profile, serverIp)
+                val builder = Builder()
                     .setSession("XXW Music VPN · ${profile.name}")
                     .setMtu(1500)
                     .addAddress("10.88.0.1", 30)
                     .addAddress("fd00:88::1", 126)
-                    .addRoute("0.0.0.0", 0)
-                    .addRoute("::", 0)
                     .addDnsServer("1.1.1.1")
                     .addDnsServer("8.8.8.8")
                     // Strict allow-list: all other packages continue using the physical network.
                     .addAllowedApplication(packageName)
-                    .establish() ?: error("Android не разрешил создать VPN-интерфейс")
+                // Everything except the VPN server itself goes into the tunnel.
+                VpnRoutes.routesExcluding(serverAddresses).forEach { builder.addRoute(it.address, it.prefix) }
+                val established = builder.establish() ?: error("Android не разрешил создать VPN-интерфейс")
                 tun = established
                 val controller = createXrayController()
                 coreController = controller
@@ -83,16 +90,21 @@ class MusicVpnService : VpnService() {
                     it.name.equals("getIsRunning", true) || it.name.equals("isRunning", true)
                 }?.invoke(controller) as? Boolean ?: true
                 if (!running) error("Xray не запустил туннель")
+                // «Подключено» is only shown after a real request went through the server.
+                val delay = measureDelay(controller)
                 saveActiveProfile(profileId)
-                publishState(STATE_CONNECTED, "Подключено · ${profile.name}")
-                updateNotification("Подключено · ${profile.name}")
+                val label = "Подключено · ${profile.name} · $delay мс"
+                publishState(STATE_CONNECTED, label)
+                updateNotification(label)
             } catch (error: Throwable) {
                 Log.e(TAG, "Unable to start Xray VPN", error)
                 stopCoreQuietly()
                 runCatching { tun?.close() }
                 tun = null
                 coreController = null
-                publishState(STATE_ERROR, error.cause?.message ?: error.message ?: "Ошибка запуска VPN")
+                publishState(STATE_ERROR,
+                    (error as? java.lang.reflect.InvocationTargetException)?.targetException?.message
+                        ?: error.message ?: "Ошибка запуска VPN")
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             } finally {
@@ -101,10 +113,34 @@ class MusicVpnService : VpnService() {
         }
     }
 
+    private fun resolveServer(host: String): List<InetAddress> = try {
+        InetAddress.getAllByName(host).toList().ifEmpty { error("пустой ответ DNS") }
+    } catch (error: Exception) {
+        throw IllegalStateException("Не удалось определить адрес сервера $host. Проверьте интернет.", error)
+    }
+
+    /** Round-trip through the proxy outbound; fails the connection if the server does not answer. */
+    private fun measureDelay(controller: Any): Long {
+        val method = controller.javaClass.methods.firstOrNull {
+            it.name == "measureDelay" && it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java
+        } ?: return 0L
+        return try {
+            method.invoke(controller, "https://www.gstatic.com/generate_204") as? Long ?: 0L
+        } catch (error: java.lang.reflect.InvocationTargetException) {
+            throw IllegalStateException(
+                "Сервер не ответил на проверку: ${error.targetException?.message ?: "нет ответа"}. " +
+                    "Проверьте, что сервер и ссылка рабочие.", error)
+        }
+    }
+
     /** Uses the exact gomobile API from AndroidLibXrayLite; reflection keeps the app buildable
      * before the generated AAR is added. Connection fails clearly until libv2ray.aar is present. */
     private fun createXrayController(): Any {
-        val seq = Class.forName("go.Seq")
+        val seq = try {
+            Class.forName("go.Seq")
+        } catch (_: ClassNotFoundException) {
+            error("В эту сборку не вошла библиотека Xray (libv2ray.aar). Установите сборку из GitHub Actions.")
+        }
         seq.getMethod("setContext", Context::class.java).invoke(null, applicationContext)
         val lib = Class.forName("libv2ray.Libv2ray")
         lib.getMethod("initCoreEnv", String::class.java, String::class.java)
@@ -154,6 +190,9 @@ class MusicVpnService : VpnService() {
 
     override fun onDestroy() {
         stopCoreQuietly()
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_STATE, null) != STATE_ERROR) {
+            publishState(STATE_DISCONNECTED, "VPN отключён")
+        }
         runCatching { tun?.close() }
         tun = null
         worker.shutdownNow()

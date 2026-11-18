@@ -6,7 +6,7 @@ import com.musicdl.core.source.MusicClientRegistry
  * Source sets.
  *
  * [RECOMMENDED_SOURCES] is what "Авто" searches: catalogs that answer anonymously and hand out a
- * playable file. VK Music is registered but token-gated, so it is [EXTRA_SOURCES]: available in the
+ * playable file. Token-gated catalogs are [EXTRA_SOURCES]: available in the
  * picker, never enabled behind the user's back.
  */
 private val DEFAULT_SOURCES: Set<String> = setOf(
@@ -16,9 +16,9 @@ private val DEFAULT_SOURCES: Set<String> = setOf(
 )
 
 /** Search needs the user's own account; Yandex still imports playlist links without a token. */
-private val TOKEN_GATED_SOURCES: Set<String> = setOf("VKMusicClient", "YandexMusicClient")
+private val TOKEN_GATED_SOURCES: Set<String> = setOf("YandexMusicClient")
 
-val ALL_SOURCES: Set<String> = MusicClientRegistry.registeredModules
+val ALL_SOURCES: Set<String> = MusicClientRegistry.registeredModules - "VKMusicClient"
 
 val RECOMMENDED_SOURCES: Set<String> = DEFAULT_SOURCES.filter { it in ALL_SOURCES }.toSet()
 

@@ -10,7 +10,8 @@ import java.util.Base64
 /** Builds the Xray JSON consumed by AndroidLibXrayLite. Only protocols implemented here are
  * advertised as connectable; import/storage may retain additional share-link formats. */
 internal object XrayConfigFactory {
-    fun build(profile: VpnProfile): String {
+    /** [serverIp] pins the outbound to an already resolved address (see [MusicVpnService]). */
+    fun build(profile: VpnProfile, serverIp: String? = null): String {
         val outbound = when (profile.protocol.lowercase()) {
             "vless" -> vless(profile.shareUri)
             "vmess" -> vmess(profile.shareUri)
@@ -19,6 +20,7 @@ internal object XrayConfigFactory {
             else -> error("${profile.protocol} импортирован, но пока не поддерживается подключением через встроенный Xray")
         }
         outbound.put("tag", "proxy")
+        if (!serverIp.isNullOrBlank()) pinServerAddress(outbound, profile.server, serverIp)
         return JSONObject().apply {
             put("log", JSONObject().put("loglevel", "warning"))
             put("stats", JSONObject())
@@ -27,7 +29,7 @@ internal object XrayConfigFactory {
                 .put("system", JSONObject().put("statsOutboundUplink", true).put("statsOutboundDownlink", true)))
             put("inbounds", JSONArray().put(JSONObject()
                 .put("tag", "tun").put("protocol", "tun")
-                .put("settings", JSONObject().put("name", "xxwmusic0").put("MTU", 1500).put("userLevel", 8))
+                .put("settings", JSONObject().put("name", "xxwmusic0").put("mtu", 1500).put("userLevel", 8))
                 .put("sniffing", JSONObject().put("enabled", true)
                     .put("destOverride", JSONArray().put("http").put("tls").put("quic")))))
             put("outbounds", JSONArray().put(outbound)
@@ -36,6 +38,19 @@ internal object XrayConfigFactory {
             put("routing", JSONObject().put("domainStrategy", "AsIs").put("rules", JSONArray()))
             put("dns", JSONObject().put("servers", JSONArray().put("1.1.1.1").put("8.8.8.8")))
         }.toString()
+    }
+
+    /** Connects by IP but keeps every name-based field (TLS SNI, WebSocket Host) on the original host. */
+    private fun pinServerAddress(outbound: JSONObject, host: String, ip: String) {
+        val settings = outbound.optJSONObject("settings") ?: return
+        val entry = (settings.optJSONArray("vnext") ?: settings.optJSONArray("servers"))?.optJSONObject(0) ?: return
+        entry.put("address", ip)
+        val stream = outbound.optJSONObject("streamSettings") ?: return
+        stream.optJSONObject("wsSettings")?.optJSONObject("headers")
+            ?.takeIf { it.optString("Host").isBlank() }?.put("Host", host)
+        stream.optJSONObject("httpupgradeSettings")?.takeIf { it.optString("host").isBlank() }?.put("host", host)
+        stream.optJSONObject("tlsSettings")?.takeIf { it.optString("serverName").isBlank() }?.put("serverName", host)
+        stream.optJSONObject("realitySettings")?.takeIf { it.optString("serverName").isBlank() }?.put("serverName", host)
     }
 
     private fun vless(link: String): JSONObject {

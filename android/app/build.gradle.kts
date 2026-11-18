@@ -37,6 +37,17 @@ android {
         jvmTarget = "17"
     }
 
+    // Xray ships a native library per CPU. Separate APKs per ABI keep each one small
+    // (install app-arm64-v8a-*.apk on any phone made after ~2017).
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

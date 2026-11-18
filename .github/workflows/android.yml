@@ -29,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: android/app/libs/libv2ray.aar
-          key: libv2ray-${{ hashFiles('android/xray/AndroidLibXrayLite/**') }}
+          key: libv2ray-v2-${{ hashFiles('android/xray/AndroidLibXrayLite/**') }}
 
       - name: Set up Go
         if: steps.aar.outputs.cache-hit != 'true'
@@ -50,12 +50,12 @@ jobs:
           yes | sdkmanager --install 'ndk;29.0.14206865'
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
           go install golang.org/x/mobile/cmd/gomobile@latest
-          mkdir -p assets data
-          bash gen_assets.sh download
-          cp -v data/*.dat assets/
+          # No routing rules use geoip/geosite, so the ~26 MB geodata files are left out of the AAR.
+          rm -rf assets
           gomobile init
           go mod tidy
-          gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
+          # arm64 + arm only: x86 builds are for emulators and would double the size.
+          gomobile bind -v -target=android/arm64,android/arm -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
           mkdir -p ../../app/libs
           cp libv2ray.aar ../../app/libs/libv2ray.aar
 

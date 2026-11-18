@@ -502,7 +502,7 @@ object Wave {
                 val familiar = artistNames(song.singers).maxOfOrNull { artistTaste[normalize(it)] ?: 0 } ?: 0
                 val novelty = if (signal == null) 0.35f else -ln(1f + signal.plays) * 0.3f - signal.skips * 0.4f
                 song to (affinity * 2f + ln(1f + familiar) * 0.16f + novelty -
-                    if (recordingKey(song) in recent) 1.25f else 0f - rejection)
+                    (if (recordingKey(song) in recent) 1.25f else 0f) - rejection)
             }.sortedByDescending { it.second }.toMutableList()
         val selected = mutableListOf<SongInfo>()
         val artistCounts = mutableMapOf<String, Int>()

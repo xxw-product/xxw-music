@@ -148,7 +148,7 @@ enum class FeedTab { SEARCH, WAVE, LIKES, ARTISTS, SETTINGS }
 private const val SEARCH_TIMEOUT_MS = 20_000L
 
 /** Whole-wave budget. The pipeline is bounded inside too; this is the last line of defence. */
-private const val WAVE_BUDGET_MS = 45_000L
+private const val WAVE_BUDGET_MS = 60_000L
 
 /** Clip resolution budget, including the last-resort cover motion fallback. */
 private const val CLIP_BUDGET_MS = 20_000L
@@ -652,6 +652,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     accept = { isPlayable(it, allowsPreviews(sources)) },
                     enrich = { enrichMetadataNow(it) },
                     report = { text -> _state.update { it.copy(progressText = text) } },
+                    owned = (library.likes() + library.downloaded() + saved).map(Wave::recordingKey).toSet(),
                 )
                 val recent = _state.value.wave.map(Wave::recordingKey).toSet()
                 // Hard stop: the build runs in its own scope, so the UI budget is measured in wall
@@ -693,7 +694,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         _state.update {
                             it.copy(wave = fallback, error = null, progressText = "Волна: офлайн-подбор")
                         }
-                        _messages.tryEmit("Источники недоступны — включили офлайн-подбор: ${fallback.size}")
+                        _messages.tryEmit("Новая волна не собралась (${error.message ?: "нет ответа источников"}) — оставили прошлую: ${fallback.size}")
                         startQueue(fallback, 0)
                     } else {
                         _state.update { it.copy(error = error.message ?: "Не удалось собрать волну") }
@@ -708,20 +709,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Last-resort wave: the last saved wave first, then anything that exists on disk. A downloaded
-     * or liked track with a local file is guaranteed to play without a network, so the wave never
-     * ends with an empty queue when the device has any music of its own.
+     * Last-resort wave: the previous wave, if there is one. Otherwise the error is shown as is.
      */
-    private fun fallbackWave(): List<SongInfo> {
-        val cached = _state.value.wave
-        // What the player already knows is playable, including the restored queue of local files.
-        val restored = playbackQueue.items + playbackQueue.historyItems
-        val local = (library.downloaded() + library.likes() + library.playlists().flatMap { it.tracks } +
-            waveStore.listening().map { it.song })
-            .distinctBy { it.key() }
-            .filter { library.localFileFor(it) != null }
-        return (cached + restored + local).distinctBy { it.key() }.take(40)
-    }
+    private fun fallbackWave(): List<SongInfo> =
+        // Only the previously built wave: the user's own library is not a "wave", and silently
+        // playing it made a failed search look like a successful one.
+        _state.value.wave.distinctBy { it.key() }.take(40)
 
     private fun startQueue(songs: List<SongInfo>, index: Int) {
         if (songs.isEmpty()) return

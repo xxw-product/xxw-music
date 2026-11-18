@@ -54,10 +54,11 @@ class VpnSubscriptionRepository(context: Context) {
     fun add(input: String): List<VpnProfile> {
         val value = input.trim()
         require(value.isNotEmpty()) { "Вставьте ссылку на подписку или VPN-конфигурацию" }
-        val sourceUrl = if (value.startsWith("https://", true) || value.startsWith("http://", true)) value else null
+        // A pasted https:// subscription, or a "happ://add/https://…"-style import link from a panel.
+        val sourceUrl = VpnShareLinkParser.extractSubscriptionUrl(value)
         val content = if (sourceUrl != null) download(sourceUrl) else value
         val parsed = VpnShareLinkParser.parse(content, sourceUrl)
-        require(parsed.isNotEmpty()) { "Не найдены поддерживаемые VPN-ссылки (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)" }
+        require(parsed.isNotEmpty()) { VpnShareLinkParser.explainEmpty(content, sourceUrl != null) }
         val current = getProfiles().associateBy { it.id }.toMutableMap()
         parsed.forEach { profile ->
             val duplicate = current.values.firstOrNull { it.shareUri == profile.shareUri }
@@ -71,7 +72,7 @@ class VpnSubscriptionRepository(context: Context) {
     fun refresh(subscriptionUrl: String): List<VpnProfile> {
         val content = download(subscriptionUrl)
         val parsed = VpnShareLinkParser.parse(content, subscriptionUrl)
-        require(parsed.isNotEmpty()) { "Подписка обновилась, но в ней не найдено поддерживаемых конфигураций" }
+        require(parsed.isNotEmpty()) { VpnShareLinkParser.explainEmpty(content, true) }
         val existing = getProfiles().filter { it.subscriptionUrl == subscriptionUrl }
             .associateBy { it.shareUri }
         val current = getProfiles().filterNot { it.subscriptionUrl == subscriptionUrl }.toMutableList()
@@ -90,9 +91,18 @@ class VpnSubscriptionRepository(context: Context) {
     }
 
     private fun download(url: String): String {
-        val request = Request.Builder().url(url).header("User-Agent", "XXW-Music/1.0 (VPN subscription importer)").build()
+        val request = Request.Builder().url(url)// Panels (Marzban, Remnawave, 3x-ui…) pick the response format from the User-Agent; a
+            // v2ray client name gets the plain/base64 list of share links this importer reads.
+            .header("User-Agent", "v2rayNG/1.9.0 XXW-Music/1.0")
+            .header("Accept", "text/plain, */*").build()
         http.newCall(request).execute().use { response ->
-            require(response.isSuccessful) { "Сервер подписки ответил HTTP ${response.code}" }
+            require(response.isSuccessful) {
+                when (response.code) {
+                    401, 403 -> "Сервер подписки отказал в доступе (HTTP ${response.code}). Проверьте, что ссылка не устарела."
+                    404 -> "Подписка не найдена (HTTP 404). Проверьте ссылку."
+                    else -> "Сервер подписки ответил HTTP ${response.code}"
+                }
+            }
             val body = response.body ?: error("Пустой ответ подписки")
             require(body.contentLength() <= MAX_SUBSCRIPTION_BYTES || body.contentLength() == -1L) {
                 "Подписка слишком большая (лимит 2 МБ)"
@@ -170,7 +180,47 @@ class VpnSubscriptionRepository(context: Context) {
 }
 
 object VpnShareLinkParser {
-    private val supported = setOf("vless", "vmess", "trojan", "ss", "shadowsocks", "hysteria", "hysteria2", "hy2", "tuic", "anytls", "wireguard", "wg", "socks", "socks5", "http", "https")
+    private val supported = setOf("vless", "vmess", "trojan", "ss", "shadowsocks", "hysteria", "hysteria2", "hy2", "tuic", "anytls", "wireguard", "wg", "socks", "socks5")
+
+    private val importSchemes = Regex(
+        "(?i)^(?:v2raytun|happ|hiddify|clash|clashmeta|sing-box|v2rayn|v2rayng|streisand|karing|flclash|shadowrocket|nekoray|husi|exclave)://\\S*",
+    )
+    private val shareSchemes = Regex("(?i)(?:^|\\s)(?:vless|vmess|trojan|ss|shadowsocks|hysteria2?|hy2|tuic|anytls|wireguard|wg|socks5?)://")
+    private val httpUrl = Regex("(?i)https?://[^\\s\"'<>]+")
+
+    /**
+     * The subscription URL inside what the user pasted: a bare https:// link, a link surrounded by
+     * text, or an app import link such as `happ://add/https://…` / `clash://install-config?url=…`.
+     * Returns null when the input is one or more share links themselves.
+     */
+    fun extractSubscriptionUrl(input: String): String? {
+        val text = input.trim()
+        if (text.isEmpty()) return null
+        val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        if (importSchemes.containsMatchIn(firstLine)) {
+            val decoded = runCatching { URLDecoder.decode(firstLine, "UTF-8") }.getOrDefault(firstLine)
+            httpUrl.find(decoded)?.let { return cleanUrl(it.value) }
+        }
+        if (shareSchemes.containsMatchIn(text)) return null
+        return httpUrl.find(text)?.let { cleanUrl(it.value) }
+    }
+
+    private fun cleanUrl(url: String): String = url.trimEnd('.', ',', ';', ')', ']', '}')
+
+    /** Why a downloaded/pasted payload produced no servers, in words the user can act on. */
+    fun explainEmpty(content: String, downloaded: Boolean): String {
+        val head = content.trimStart().take(300).lowercase()
+        return when {
+            head.startsWith("<!doctype") || head.startsWith("<html") || head.contains("<head") ->
+                "По ссылке открылась веб-страница, а не подписка. Скопируйте именно ссылку подписки из панели."
+            head.startsWith("proxies:") || head.contains("\nproxies:") || head.startsWith("port:") || head.startsWith("mixed-port:") ->
+                "Подписка в формате Clash (YAML) не поддерживается. Выберите в панели формат «V2Ray / base64» или список ссылок."
+            head.startsWith("{") ->
+                "Подписка в формате JSON (sing-box/Xray) не поддерживается. Выберите в панели формат «V2Ray / base64» или список ссылок."
+            downloaded -> "Подписка загружена, но в ней нет поддерживаемых серверов (VLESS, VMess, Trojan, Shadowsocks)."
+            else -> "Не найдены поддерживаемые VPN-ссылки (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)"
+        }
+    }
 
     fun parse(input: String, subscriptionUrl: String? = null): List<VpnProfile> {
         val candidates = mutableListOf<String>()
@@ -217,15 +267,12 @@ object VpnShareLinkParser {
             "hysteria" -> "Hysteria"
             "wg", "wireguard" -> "WireGuard"
             "socks", "socks5" -> "SOCKS"
-            "http", "https" -> "HTTP proxy"
             else -> scheme.replaceFirstChar { it.uppercase() }
         }
         VpnProfile(UUID.randomUUID().toString(), display, protocol, host, port, link, source)
     }.getOrNull()
 
     private fun defaultPort(scheme: String): Int = when (scheme) {
-        "https" -> 443
-        "http" -> 80
         else -> 0
     }
 

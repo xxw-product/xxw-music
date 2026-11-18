@@ -60,7 +60,7 @@ jobs:
           cp libv2ray.aar ../../app/libs/libv2ray.aar
 
       - name: Unit tests (VPN routing)
-        run: ./gradlew :app:testDebugUnitTest --tests 'com.musicdl.android.VpnRoutesTest'
+        run: ./gradlew :app:testDebugUnitTest --tests 'com.musicdl.android.VpnRoutesTest' --tests 'com.musicdl.android.VpnSubscriptionParsingTest'
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug

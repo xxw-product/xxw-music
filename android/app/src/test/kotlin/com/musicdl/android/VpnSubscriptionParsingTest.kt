@@ -50,4 +50,21 @@ class VpnSubscriptionParsingTest {
         assertTrue(VpnShareLinkParser.explainEmpty("proxies:\n  - name: a", true).contains("Clash"))
         assertTrue(VpnShareLinkParser.explainEmpty("{\"outbounds\":[]}", true).contains("JSON"))
     }
+
+    @Test fun shortBodyIsReadWithoutEof() {
+        val data = "vless://abc@example.com:443#x".toByteArray()
+        val source = okio.Buffer().write(data)
+        assertEquals(data.toList(), readBounded(source, 2 * 1024 * 1024).toList())
+    }
+
+    @Test fun oversizedBodyIsRejected() {
+        val source = okio.Buffer().write(ByteArray(2_000))
+        val error = runCatching { readBounded(source, 1_000) }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+    }
+
+    @Test fun errorsAlwaysHaveText() {
+        assertEquals("Ошибка (EOFException)", java.io.EOFException().vpnMessage("Ошибка"))
+        assertEquals("boom", IllegalStateException("boom").vpnMessage("Ошибка"))
+    }
 }

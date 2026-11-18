@@ -22,6 +22,21 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/**
+ * Reads at most [limit] bytes. `readByteArray(n)` throws a message-less EOFException when the body
+ * is shorter than n, which made every normal-sized subscription fail, so the source is buffered
+ * with `request` instead (it simply stops at the end of the body).
+ */
+internal fun readBounded(source: okio.BufferedSource, limit: Int): ByteArray {
+    source.request(limit.toLong() + 1L)
+    require(source.buffer.size <= limit) { "Подписка слишком большая (лимит 2 МБ)" }
+    return source.readByteArray()
+}
+
+/** Never show an empty error: fall back to a description plus the exception type. */
+internal fun Throwable.vpnMessage(fallback: String): String =
+    message?.takeIf { it.isNotBlank() } ?: "$fallback (${javaClass.simpleName})"
+
 /** A subscription entry kept locally. The raw share URI is encrypted at rest. */
 data class VpnProfile(
     val id: String,
@@ -107,9 +122,7 @@ class VpnSubscriptionRepository(context: Context) {
             require(body.contentLength() <= MAX_SUBSCRIPTION_BYTES || body.contentLength() == -1L) {
                 "Подписка слишком большая (лимит 2 МБ)"
             }
-            val bytes = body.source().readByteArray(MAX_SUBSCRIPTION_BYTES.toLong() + 1L)
-            require(bytes.size <= MAX_SUBSCRIPTION_BYTES) { "Подписка слишком большая (лимит 2 МБ)" }
-            return bytes.toString(StandardCharsets.UTF_8)
+            return readBounded(body.source(), MAX_SUBSCRIPTION_BYTES).toString(StandardCharsets.UTF_8)
         }
     }
 

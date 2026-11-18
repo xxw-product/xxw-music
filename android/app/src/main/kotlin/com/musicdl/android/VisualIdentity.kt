@@ -505,7 +505,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                                 vpnInput = ""
                                 vpnStatus = "Добавлено серверов: ${updated.size}"
                             }
-                            .onFailure { error -> vpnStatus = error.message ?: "Не удалось импортировать подписку" }
+                            .onFailure { error -> vpnStatus = error.vpnMessage("Не удалось импортировать подписку") }
                         vpnBusy = false
                     }
                 },
@@ -552,7 +552,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                             vpnScope.launch {
                                 runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vpnRepository.refresh(profile.subscriptionUrl) } }
                                     .onSuccess { vpnProfiles = it; vpnStatus = "Подписка обновлена" }
-                                    .onFailure { vpnStatus = it.message ?: "Не удалось обновить подписку" }
+                                    .onFailure { vpnStatus = it.vpnMessage("Не удалось обновить подписку") }
                                 vpnBusy = false
                             }
                         }) { Icon(Icons.Rounded.Refresh, "Обновить подписку") }
@@ -597,7 +597,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             }
             if (vpnStatus.isNotBlank()) Text(vpnStatus, style = MaterialTheme.typography.bodySmall,
                 color = if (vpnState == MusicVpnService.STATE_ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Через VPN направляется только трафик XXW Music. Остальные приложения телефона используют обычное подключение. Для подключения сейчас реализованы VLESS, VMess, Trojan и Shadowsocks. Для запуска Xray требуется собранная библиотека libv2ray.aar.",
+            Text("Через VPN направляется только трафик XXW Music. Остальные приложения телефона используют обычное подключение. Для подключения сейчас реализованы VLESS, VMess, Trojan и Shadowsocks.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 

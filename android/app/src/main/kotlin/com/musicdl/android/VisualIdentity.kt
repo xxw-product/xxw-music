@@ -442,6 +442,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     val vpnRepository = remember(vpnContext) { VpnSubscriptionRepository(vpnContext) }
     var vpnProfiles by remember { mutableStateOf(runCatching { vpnRepository.getProfiles() }.getOrDefault(emptyList())) }
     var vpnInput by rememberSaveable { mutableStateOf("") }
+    var vpnClient by remember { mutableStateOf(vpnRepository.subscriptionClient) }
     val vpnPrefs = remember(vpnContext) { vpnContext.getSharedPreferences(MusicVpnService.PREFS, android.content.Context.MODE_PRIVATE) }
     var vpnSelectedId by rememberSaveable { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_SELECTED_PROFILE, null) ?: vpnPrefs.getString(MusicVpnService.KEY_ACTIVE_PROFILE, null).orEmpty()) }
     var vpnState by remember { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_STATE, MusicVpnService.STATE_DISCONNECTED) ?: MusicVpnService.STATE_DISCONNECTED) }
@@ -490,6 +491,19 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 maxLines = 4,
                 enabled = !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED,
             )
+            Text("Подписка запрашивается как клиент:", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                SubscriptionClient.entries.forEach { client ->
+                    FilterChip(
+                        selected = vpnClient == client,
+                        onClick = { vpnClient = client; vpnRepository.subscriptionClient = client },
+                        label = { Text(client.label) },
+                    )
+                }
+            }
+            Text("«Авто» пробует Happ, v2rayNG и INCY, пока провайдер не отдаст серверы. Если провайдер просит другое приложение, выберите клиент вручную.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(
                 onClick = {
                     vpnBusy = true

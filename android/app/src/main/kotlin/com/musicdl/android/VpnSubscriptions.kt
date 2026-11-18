@@ -37,6 +37,25 @@ internal fun readBounded(source: okio.BufferedSource, limit: Int): ByteArray {
 internal fun Throwable.vpnMessage(fallback: String): String =
     message?.takeIf { it.isNotBlank() } ?: "$fallback (${javaClass.simpleName})"
 
+/** The device limit of the subscription is used up: remove an old device at the provider. */
+class DeviceLimitException : Exception(
+    "Достигнут лимит устройств по этой подписке. Удалите старое устройство в личном кабинете или боте провайдера и повторите.",
+)
+
+/** Client identity sent to the subscription server. */
+enum class SubscriptionClient(val id: String, val label: String, val userAgent: String) {
+    AUTO("auto", "Авто", ""),
+    HAPP("happ", "Happ", "Happ/2.9.0"),
+    V2RAYNG("v2rayng", "v2rayNG", "v2rayNG/1.9.40"),
+    INCY("incy", "INCY", "INCY/1.0.0");
+
+    companion object {
+        /** Tried in this order in «Авто» until an answer contains servers. */
+        val AUTO_ORDER = listOf(HAPP, V2RAYNG, INCY)
+        fun byId(id: String?): SubscriptionClient = entries.firstOrNull { it.id == id } ?: AUTO
+    }
+}
+
 /** A subscription entry kept locally. The raw share URI is encrypted at rest. */
 data class VpnProfile(
     val id: String,
@@ -54,6 +73,7 @@ data class VpnProfile(
  * is a separate integration step and must report its real connection state to the UI.
  */
 class VpnSubscriptionRepository(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs = context.applicationContext.getSharedPreferences("vpn_subscription_store", Context.MODE_PRIVATE)
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -69,6 +89,7 @@ class VpnSubscriptionRepository(context: Context) {
     fun add(input: String): List<VpnProfile> {
         val value = input.trim()
         require(value.isNotEmpty()) { "Вставьте ссылку на подписку или VPN-конфигурацию" }
+        require(!VpnShareLinkParser.isEncryptedProviderLink(value)) { VpnShareLinkParser.ENCRYPTED_LINK_MESSAGE }
         // A pasted https:// subscription, or a "happ://add/https://…"-style import link from a panel.
         val sourceUrl = VpnShareLinkParser.extractSubscriptionUrl(value)
         val content = if (sourceUrl != null) download(sourceUrl) else value
@@ -105,16 +126,71 @@ class VpnSubscriptionRepository(context: Context) {
         return getProfiles()
     }
 
+    /** Which client the subscription request identifies itself as; stored in the app. */
+    var subscriptionClient: SubscriptionClient
+        get() = SubscriptionClient.byId(prefs.getString(KEY_CLIENT, null))
+        set(value) { prefs.edit().putString(KEY_CLIENT, value.id).apply() }
+
+    /**
+     * Stable per-install device id (panels with a device limit require `x-hwid`: 10–64 chars of
+     * letters, digits, `=` and `-`). It is derived from the real Android ID, so the same phone always
+     * reports the same id and never uses up a second device slot.
+     */
+    private fun hwid(): String {
+        prefs.getString(KEY_HWID, null)?.takeIf { it.length in 10..64 }?.let { return it }
+        val androidId = runCatching {
+            android.provider.Settings.Secure.getString(appContext.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+        }.getOrNull().orEmpty()
+        val seed = androidId.ifBlank { UUID.randomUUID().toString() } + appContext.packageName
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(seed.toByteArray())
+        val id = digest.joinToString("") { "%02x".format(it) }.take(32)
+        prefs.edit().putString(KEY_HWID, id).apply()
+        return id
+    }
+
+    private fun ascii(value: String): String = value.filter { it.code in 32..126 }.trim().ifBlank { "unknown" }
+
+    /**
+     * Fetches a subscription. Some providers only answer clients they recognise ("use another app"),
+     * so in «Авто» mode the request is repeated as Happ, v2rayNG and INCY until one answer contains
+     * servers. Every request carries the standard device headers.
+     */
     private fun download(url: String): String {
-        val request = Request.Builder().url(url)// Panels (Marzban, Remnawave, 3x-ui…) pick the response format from the User-Agent; a
-            // v2ray client name gets the plain/base64 list of share links this importer reads.
-            .header("User-Agent", "v2rayNG/1.9.0 XXW-Music/1.0")
-            .header("Accept", "text/plain, */*").build()
+        val candidates = subscriptionClient.let { if (it == SubscriptionClient.AUTO) SubscriptionClient.AUTO_ORDER else listOf(it) }
+        var fallbackBody: String? = null
+        var failure: Exception? = null
+        for (client in candidates) {
+            try {
+                val body = fetch(url, client)
+                if (VpnShareLinkParser.parse(body, url).isNotEmpty()) return body
+                if (fallbackBody == null) fallbackBody = body
+            } catch (limit: DeviceLimitException) {
+                throw limit
+            } catch (error: Exception) {
+                if (failure == null) failure = error
+            }
+        }
+        return fallbackBody ?: throw (failure ?: IllegalStateException("Сервер подписки не ответил"))
+    }
+
+    private fun fetch(url: String, client: SubscriptionClient): String {
+        val request = Request.Builder().url(url)
+            .header("User-Agent", client.userAgent)
+            .header("Accept", "text/plain, */*")
+            .header("x-hwid", hwid())
+            .header("x-device-os", "Android")
+            .header("x-ver-os", ascii(android.os.Build.VERSION.RELEASE.orEmpty()))
+            .header("x-device-model", ascii(android.os.Build.MODEL.orEmpty()))
+            .build()
         http.newCall(request).execute().use { response ->
+            if (response.header("x-hwid-max-devices-reached").equals("true", true) ||
+                response.header("x-hwid-limit").equals("true", true)) {
+                throw DeviceLimitException()
+            }
             require(response.isSuccessful) {
                 when (response.code) {
                     401, 403 -> "Сервер подписки отказал в доступе (HTTP ${response.code}). Проверьте, что ссылка не устарела."
-                    404 -> "Подписка не найдена (HTTP 404). Проверьте ссылку."
+                    404 -> "Подписка не найдена (HTTP 404). Проверьте ссылку или не исчерпан ли лимит устройств."
                     else -> "Сервер подписки ответил HTTP ${response.code}"
                 }
             }
@@ -187,6 +263,8 @@ class VpnSubscriptionRepository(context: Context) {
     private companion object {
         const val KEY_ALIAS = "xxw_music_vpn_subscription_key"
         const val KEY_PAYLOAD = "encrypted_profiles_v1"
+        const val KEY_CLIENT = "subscription_client"
+        const val KEY_HWID = "hwid"
         const val GCM_IV_BYTES = 12
         const val MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024
     }
@@ -196,7 +274,7 @@ object VpnShareLinkParser {
     private val supported = setOf("vless", "vmess", "trojan", "ss", "shadowsocks", "hysteria", "hysteria2", "hy2", "tuic", "anytls", "wireguard", "wg", "socks", "socks5")
 
     private val importSchemes = Regex(
-        "(?i)^(?:v2raytun|happ|hiddify|clash|clashmeta|sing-box|v2rayn|v2rayng|streisand|karing|flclash|shadowrocket|nekoray|husi|exclave)://\\S*",
+        "(?i)^(?:v2raytun|happ|incy|v2box|hiddify|clash|clashmeta|sing-box|v2rayn|v2rayng|streisand|karing|flclash|shadowrocket|nekoray|husi|exclave)://\\S*",
     )
     private val shareSchemes = Regex("(?i)(?:^|\\s)(?:vless|vmess|trojan|ss|shadowsocks|hysteria2?|hy2|tuic|anytls|wireguard|wg|socks5?)://")
     private val httpUrl = Regex("(?i)https?://[^\\s\"'<>]+")
@@ -224,6 +302,16 @@ object VpnShareLinkParser {
     }
 
     private fun cleanUrl(url: String): String = url.trimEnd('.', ',', ';', ')', ']', '}')
+
+    private val encryptedLink = Regex("(?i)\\b(?:happ://crypt\\d*|incy://crypt\\d*|v2raytun://crypt\\d*)/")
+
+    /** Encrypted provider links hide the subscription address on purpose; they open only in their own app. */
+    fun isEncryptedProviderLink(input: String): Boolean = encryptedLink.containsMatchIn(input)
+
+    const val ENCRYPTED_LINK_MESSAGE =
+        "Это зашифрованная ссылка (happ://crypt… / incy://crypt…): провайдер скрыл в ней адрес подписки, и она " +
+            "открывается только в приложении Happ или INCY. Попросите у провайдера обычную ссылку подписки " +
+            "https://… и вставьте её сюда."
 
     /** Why a downloaded/pasted payload produced no servers, in words the user can act on. */
     fun explainEmpty(content: String, downloaded: Boolean): String {

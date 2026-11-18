@@ -67,4 +67,21 @@ class VpnSubscriptionParsingTest {
         assertEquals("Ошибка (EOFException)", java.io.EOFException().vpnMessage("Ошибка"))
         assertEquals("boom", IllegalStateException("boom").vpnMessage("Ошибка"))
     }
+
+    @Test fun encryptedProviderLinksAreRecognised() {
+        assertTrue(VpnShareLinkParser.isEncryptedProviderLink("happ://crypt4/AbCdEf=="))
+        assertTrue(VpnShareLinkParser.isEncryptedProviderLink("incy://crypt1/xyz"))
+        assertTrue(!VpnShareLinkParser.isEncryptedProviderLink("happ://add/https://panel.example/sub/abc"))
+    }
+
+    @Test fun incyImportLinkIsUnwrapped() {
+        assertEquals("https://panel.example/sub/abc",
+            VpnShareLinkParser.extractSubscriptionUrl("incy://import/https://panel.example/sub/abc"))
+    }
+
+    @Test fun autoClientTriesHappFirst() {
+        assertEquals(SubscriptionClient.HAPP, SubscriptionClient.AUTO_ORDER.first())
+        assertEquals(SubscriptionClient.AUTO, SubscriptionClient.byId(null))
+        assertEquals(SubscriptionClient.INCY, SubscriptionClient.byId("incy"))
+    }
 }

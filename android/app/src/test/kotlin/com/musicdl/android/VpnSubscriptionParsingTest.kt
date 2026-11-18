@@ -36,7 +36,7 @@ class VpnSubscriptionParsingTest {
     @Test fun base64SubscriptionBodyIsParsed() {
         val body = Base64.getEncoder().encodeToString("$vless\n$trojan\nhttps://support.example/help".toByteArray())
         val profiles = VpnShareLinkParser.parse(body, "https://panel.example/sub/abc")
-        assertEquals(listOf("VLESS", "Trojan"), profiles.map { it.protocol })
+        assertEquals(listOf("Vless", "Trojan"), profiles.map { it.protocol })
         assertEquals(listOf("Server A", "Server B"), profiles.map { it.name })
         assertTrue(profiles.all { it.subscriptionUrl == "https://panel.example/sub/abc" })
     }

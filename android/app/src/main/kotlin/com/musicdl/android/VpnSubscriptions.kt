@@ -198,6 +198,11 @@ object VpnShareLinkParser {
         if (text.isEmpty()) return null
         val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
         if (importSchemes.containsMatchIn(firstLine)) {
+            // clash://install-config?url=<encoded>&name=… carries the subscription in a parameter.
+            Regex("(?i)[?&]url=([^&\\s]+)").find(firstLine)?.groupValues?.get(1)?.let { raw ->
+                val decoded = runCatching { URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+                httpUrl.find(decoded)?.let { return cleanUrl(it.value) }
+            }
             val decoded = runCatching { URLDecoder.decode(firstLine, "UTF-8") }.getOrDefault(firstLine)
             httpUrl.find(decoded)?.let { return cleanUrl(it.value) }
         }

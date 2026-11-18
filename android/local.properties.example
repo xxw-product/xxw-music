@@ -1,0 +1,4 @@
+# Copy these two lines into android/local.properties.
+# Keep the protected key local; do not commit or send it.
+VKIDClientID=54906914
+VKIDClientSecret=<protected key from VK ID cabinet>

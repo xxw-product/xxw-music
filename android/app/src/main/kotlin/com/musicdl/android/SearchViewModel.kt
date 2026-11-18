@@ -1,4 +1,5 @@
 package com.musicdl.android
+import android.provider.Settings
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -148,7 +149,7 @@ enum class FeedTab { SEARCH, WAVE, LIKES, ARTISTS, SETTINGS }
 private const val SEARCH_TIMEOUT_MS = 20_000L
 
 /** Whole-wave budget. The pipeline is bounded inside too; this is the last line of defence. */
-private const val WAVE_BUDGET_MS = 60_000L
+private const val WAVE_BUDGET_MS = 45_000L
 
 /** Clip resolution budget, including the last-resort cover motion fallback. */
 private const val CLIP_BUDGET_MS = 20_000L
@@ -198,7 +199,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _state = MutableStateFlow(
         MusicUiState(
-            playlists = library.playlists(),
+            playlists = emptyList(),
             autoDownload = library.autoDownload,
             listeningCount = waveStore.totalPlays(),
             keyword = library.lastKeyword,
@@ -208,11 +209,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             // Offline fallback waves may contain local files whose "source" no longer exists in the
             // provider list; they are still playable, so they must survive a restart.
             wave = library.lastWave().filter { it.source in ALL_SOURCES || library.localFileFor(it) != null },
-            likes = library.likes(),
-            likedKeys = library.likes().map { it.key() }.toSet(),
-            history = library.history(),
+            likes = emptyList(),
+            likedKeys = emptySet(),
+            history = emptyList(),
             tab = library.tab,
-            followedArtists = library.followedArtists(),
+            followedArtists = emptyList(),
             downloads = downloads.entries(),
             // Offline copies survive a restart; the action sheet must not offer to fetch them again.
             saves = downloads.entries().associate { it.key to SaveState.DONE },
@@ -303,9 +304,34 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private var positionJob: Job? = null
+    private var playbackPersistJob: Job? = null
     private var lastPositionSaveMs = android.os.SystemClock.elapsedRealtime()
 
     init {
+        // Restore large JSON snapshots away from the main thread. A large downloaded library can
+        // otherwise make the first wave tap look like an application hang/ANR.
+        viewModelScope.launch(Dispatchers.IO) {
+            val playlists = library.playlists()
+            val likes = library.likes()
+            val history = library.history()
+            val followedArtists = library.followedArtists()
+            val restoredWave = library.lastWave().filter { it.source in ALL_SOURCES || library.localFileFor(it) != null }
+            val restoredResults = library.lastResults().filter { it.source in ALL_SOURCES }
+            withContext(Dispatchers.Main.immediate) {
+                _state.update { current ->
+                    current.copy(
+                        playlists = playlists,
+                        likes = likes,
+                        likedKeys = likes.map { it.key() }.toSet(),
+                        history = history,
+                        followedArtists = followedArtists,
+                        wave = restoredWave,
+                        results = restoredResults,
+                    )
+                }
+            }
+        }
+
         PlayerHolder.next = ::playNext
         PlayerHolder.previous = ::playPrevious
         positionJob = viewModelScope.launch {
@@ -433,6 +459,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         logger = logger,
         defaultSearchCookies = buildMap {
             library.vkToken.takeIf { it.isNotBlank() }?.let { put("vk_access_token", it) }
+            runCatching {
+                Settings.Secure.getString(getApplication<Application>().contentResolver, Settings.Secure.ANDROID_ID)
+            }.getOrNull()?.takeIf { it.isNotBlank() }?.let { put("vk_device_id", it) }
             library.yandexToken.takeIf { it.isNotBlank() }?.let { put("yandex_token", it) }
             library.qobuzAppId.takeIf { it.isNotBlank() }?.let { put("qobuz_app_id", it) }
             library.qobuzAppSecret.takeIf { it.isNotBlank() }?.let { put("qobuz_app_secret", it) }
@@ -532,6 +561,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 progressTotal = 0,
             )
         }
+        NowBarStatus.show(getApplication(), "XXW Music · поиск", "Ищу «$keyword»…")
 
         viewModelScope.launch {
             val sources = _state.value.activeSources
@@ -592,6 +622,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 if (flat.isNotEmpty()) _messages.tryEmit("Готово треков: ${flat.size}")
+                NowBarStatus.complete(getApplication(), "Поиск завершён · ${flat.size} треков")
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (err: Exception) {
@@ -602,6 +633,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         error = err.message ?: "Поиск не удался",
                     )
                 }
+                NowBarStatus.complete(getApplication(), "Поиск не удался")
             } finally {
                 // Closing the OkHttp pool touches sockets, so it must stay off the main thread.
                 withContext(Dispatchers.IO) { client.close() }
@@ -630,19 +662,43 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         if (waveJob?.isActive == true) return
         val epoch = ++waveEpoch
         _state.update { it.copy(isWaveLoading = true, error = null, progressText = "Волна: собираем профиль") }
+        NowBarStatus.show(getApplication(), "XXW Music · Моя волна", "Подбираем музыку…")
         waveJob = viewModelScope.launch {
             try {
-                val saved = library.playlists().flatMap { it.tracks }
-                val seeds = (library.likes() + saved + waveStore.listening().map { it.song }).distinctBy { it.key() }
+                // Treat the actual music library as taste evidence too. Previously downloaded
+                // tracks were only used by the offline fallback, so a user with a full local
+                // library but few likes had no artist profile and got generic/empty catalog hits.
+                val (saved, libraryTracks, likesSnapshot) = withContext(Dispatchers.IO) {
+                    val savedTracks = library.playlists().flatMap { it.tracks }
+                    Triple(savedTracks, library.downloaded(), library.likes())
+                }
+                // A large local library is legitimate taste data, but building the taste model
+                // is CPU work. With ~2000 downloaded tracks the old code performed distinctBy(),
+                // genre inference, artist normalization and profile scoring on the UI thread;
+                // that could block Android's main looper long enough to produce an ANR exactly
+                // after the progress bar reached the "уточняем вкус" stage.
+                val (seeds, profile) = withContext(Dispatchers.Default) {
+                    val tasteTracks = (likesSnapshot + saved + libraryTracks).distinctBy { it.key() }
+                    val listening = waveStore.listening()
+                    val seeds = (tasteTracks + listening.map { it.song }).distinctBy { it.key() }
+                    val profile = Wave.profile(
+                        _state.value.coefficients,
+                        likesSnapshot,
+                        listening,
+                        library.followedArtists(),
+                        saved = (saved + libraryTracks).distinctBy { it.key() },
+                    )
+                    seeds to profile
+                }
                 _state.update { it.copy(progressText = "Волна: уточняем вкус") }
-                withTimeoutOrNull(8_000L) {
-                    // A failed metadata lookup must never abort the whole wave.
-                    coroutineScope {
-                        seeds.take(12).map { song -> async { runCatching { enrichMetadataNow(song) } } }.awaitAll()
+                withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(8_000L) {
+                        // A failed metadata lookup must never abort the whole wave.
+                        coroutineScope {
+                            seeds.take(12).map { song -> async { runCatching { enrichMetadataNow(song) } } }.awaitAll()
+                        }
                     }
                 }
-                val profile = Wave.profile(_state.value.coefficients, library.likes(), waveStore.listening(),
-                    library.followedArtists(), saved = library.playlists().flatMap { it.tracks })
                 // The wave always has the anonymous catalogs as a floor, even if the user narrowed
                 // the search to a token-gated source that is not configured.
                 val sources = (supportedSources(_state.value.activeSources) + RECOMMENDED_SOURCES).toSet()
@@ -652,7 +708,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     accept = { isPlayable(it, allowsPreviews(sources)) },
                     enrich = { enrichMetadataNow(it) },
                     report = { text -> _state.update { it.copy(progressText = text) } },
-                    owned = (library.likes() + library.downloaded() + saved).map(Wave::recordingKey).toSet(),
                 )
                 val recent = _state.value.wave.map(Wave::recordingKey).toSet()
                 // Hard stop: the build runs in its own scope, so the UI budget is measured in wall
@@ -669,9 +724,14 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (epoch != waveEpoch) return@launch
                 val tracks = build.tracks
                 if (tracks.isEmpty()) throw WaveUnavailable("Источники не дали треков. Попробуйте ещё раз.")
-                library.saveWave(tracks)
-                waveStore.generation = waveStore.generation + 1
-                waveStore.prune()
+                // Wave results can be large. Serializing 150 tracks into SharedPreferences on the
+                // main thread was the remaining source of the ANR: the progress reached 100%, then
+                // Android was blocked while encodeSongs() and prefs.apply() ran.
+                withContext(Dispatchers.IO) {
+                    library.saveWave(tracks)
+                    waveStore.generation = waveStore.generation + 1
+                    waveStore.prune()
+                }
                 _state.update {
                     it.copy(
                         wave = tracks,
@@ -688,13 +748,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (epoch == waveEpoch) {
                     // The button must still produce music when the catalogs are unreachable: the
                     // previous wave and every downloaded/liked file are real, playable tracks.
-                    val fallback = fallbackWave()
+                    val fallback = withContext(Dispatchers.IO) { fallbackWave() }
                     if (fallback.isNotEmpty()) {
-                        library.saveWave(fallback)
+                        withContext(Dispatchers.IO) { library.saveWave(fallback) }
                         _state.update {
                             it.copy(wave = fallback, error = null, progressText = "Волна: офлайн-подбор")
                         }
-                        _messages.tryEmit("Новая волна не собралась (${error.message ?: "нет ответа источников"}) — оставили прошлую: ${fallback.size}")
+                        _messages.tryEmit("Источники недоступны — включили офлайн-подбор: ${fallback.size}")
                         startQueue(fallback, 0)
                     } else {
                         _state.update { it.copy(error = error.message ?: "Не удалось собрать волну") }
@@ -704,17 +764,18 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 // Loading always finishes; a stale job must not clear a newer one's flag.
                 if (epoch == waveEpoch) _state.update { it.copy(isWaveLoading = false) }
+                NowBarStatus.complete(getApplication(), "Моя волна завершена")
             }
         }
     }
 
     /**
-     * Last-resort wave: the previous wave, if there is one. Otherwise the error is shown as is.
+     * Network failure must not silently turn the library into a recommendation feed.
+     * Reuse only a previously generated catalog wave; local files remain available in the Library.
      */
     private fun fallbackWave(): List<SongInfo> =
-        // Only the previously built wave: the user's own library is not a "wave", and silently
-        // playing it made a failed search look like a successful one.
-        _state.value.wave.distinctBy { it.key() }.take(40)
+        _state.value.wave.filter { it.source in ALL_SOURCES && library.localFileFor(it) == null }
+            .distinctBy { it.key() }.take(150)
 
     private fun startQueue(songs: List<SongInfo>, index: Int) {
         if (songs.isEmpty()) return
@@ -1131,22 +1192,30 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private fun persistPlayback() {
         publishQueue()
         val song = _state.value.player.song
-        if (song == null || playbackQueue.isEmpty) {
-            library.clearPlayback()
-            return
-        }
+        val queue = playbackQueue.items.toList()
+        val index = playbackQueue.index.coerceAtLeast(0)
+        val history = playbackQueue.historyItems
+        val shuffle = playbackQueue.shuffle
         val position = if (player.mediaItemCount > 0 && !player.isPlaying) {
             player.currentPosition.coerceAtLeast(0L)
         } else {
             _state.value.player.positionMs
         }
-        library.savePlayback(
-            queue = playbackQueue.items,
-            index = playbackQueue.index.coerceAtLeast(0),
-            positionMs = position,
-            history = playbackQueue.historyItems,
-            shuffle = playbackQueue.shuffle,
-        )
+        playbackPersistJob?.cancel()
+        playbackPersistJob = viewModelScope.launch(Dispatchers.IO) {
+            // Queue snapshots are JSON too. Never serialize a 100+ track wave on the UI thread.
+            if (song == null || queue.isEmpty()) {
+                library.clearPlayback()
+            } else {
+                library.savePlayback(
+                    queue = queue,
+                    index = index,
+                    positionMs = position,
+                    history = history,
+                    shuffle = shuffle,
+                )
+            }
+        }
     }
 
     /** Play a list from the top, e.g. the whole "Нравится" playlist. */
@@ -1477,6 +1546,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         _state.update { it.copy(saves = it.saves + (key to SaveState.RUNNING)) }
+        NowBarStatus.show(
+            getApplication(),
+            "XXW Music · скачивание",
+            song.songName?.takeIf { it.isNotBlank() } ?: "Скачивание трека…",
+        )
 
         val job = viewModelScope.launch {
             val client = buildClient(setOf(song.source))
@@ -1577,12 +1651,21 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                             downloadUsedBytes = downloads.usedBytes(),
                         )
                     }
+                    val stillDownloading = _state.value.saves.values.count { it == SaveState.RUNNING }
+                    if (stillDownloading > 0) {
+                        NowBarStatus.show(getApplication(), "XXW Music · скачивание", "Осталось активных: $stillDownloading")
+                    } else {
+                        NowBarStatus.complete(getApplication(), "Скачивание завершено")
+                    }
                     if (!automatic) _messages.tryEmit("Сохранено · ${DownloadStore.sizeLabel(extras)}")
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (err: Exception) {
                 _state.update { it.copy(saves = it.saves + (key to SaveState.FAILED)) }
+                if (_state.value.saves.values.none { it == SaveState.RUNNING }) {
+                    NowBarStatus.complete(getApplication(), "Скачивание завершилось с ошибкой")
+                }
                 _messages.tryEmit("Не удалось сохранить: ${err.message ?: "неизвестная ошибка"}")
             } finally {
                 automaticJobs.remove(key)
@@ -1748,10 +1831,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     // ------------------------------------------------------------- Yandex import
 
     fun importYandexMusic() {
-        if (_state.value.isImporting) return
+        TransferForegroundService.startYandex(getApplication())
+    }
+
+    internal fun importYandexMusicInternal(onFinished: () -> Unit = {}) {
+        if (_state.value.isImporting) { onFinished(); return }
         val token = library.yandexToken
         if (token.isBlank()) {
             _messages.tryEmit("Вставьте токен Яндекс Музыки в настройках")
+            onFinished()
             return
         }
         _state.update { it.copy(isImporting = true, importProgress = "Яндекс: подключаемся", importReport = null) }
@@ -1805,6 +1893,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 runCatching { yandex.close() }
                 _state.update { it.copy(isImporting = false, importProgress = "") }
+                onFinished()
             }
         }
     }
@@ -1890,10 +1979,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun importPlaylistLink(rawLink: String, download: Boolean = false, syncId: String? = null) {
+        TransferForegroundService.startPlaylist(getApplication(), rawLink, download, syncId)
+    }
+
+    internal fun importPlaylistLinkInternal(rawLink: String, download: Boolean = false, syncId: String? = null, onFinished: () -> Unit = {}) {
         val link = Regex("https?://[^\\s<>]+").find(rawLink.trim())?.value ?: rawLink.trim()
-        if (link.isEmpty()) return
+        if (link.isEmpty()) { onFinished(); return }
         if (_state.value.isImporting) {
             _messages.tryEmit("Импорт уже идёт")
+            onFinished()
             return
         }
         _state.update { it.copy(isImporting = true, importProgress = "Ссылка: читаем плейлист", linkImportResult = null) }
@@ -1941,6 +2035,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 _messages.tryEmit(message)
             } finally {
                 _state.update { it.copy(isImporting = false, importProgress = "") }
+                onFinished()
             }
         }
     }

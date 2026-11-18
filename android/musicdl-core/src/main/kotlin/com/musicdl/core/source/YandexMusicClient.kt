@@ -165,7 +165,9 @@ class YandexMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
         Regex("""music\.yandex\.[a-z]+/users/([^/?#]+)/playlists/(\d+)""").find(url)?.let {
             return YandexLink("playlist", it.groupValues[1], it.groupValues[2])
         }
-        Regex("""music\.yandex\.[a-z]+/playlists?/([A-Za-z0-9-]+)""").find(url)?.let {
+        // New Yandex share links for “Мне нравится” use /playlists/lk.<uuid>.
+        // The dot is part of the playlist UUID and must not be rejected by the URL parser.
+        Regex("""music\.yandex\.[a-z]+/playlists?/([^/?#]+)""").find(url)?.let {
             return YandexLink("playlist_uuid", it.groupValues[1])
         }
         Regex("""music\.yandex\.[a-z]+/album/(\d+)/track/(\d+)""").find(url)?.let {
@@ -253,7 +255,10 @@ class YandexMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
         // The track record itself says whether a full file is possible without a subscription, so
         // a playlist of anonymous tracks costs no download-info request at all.
         val fullFilePossible = token != null || JsonUtil.bool(track, "availableFullWithoutPermission") == true
-        val status = if (fullFilePossible) downloadStatus(trackId) else null
+        // Playlist-link imports are metadata-first: probing download-info for every liked track
+        // can turn a large “Мне нравится” list into hundreds/thousands of network requests.
+        // resolvePlayable() in the app resolves metadata against the selected catalogs afterwards.
+        val status = if (requireFullAudio && fullFilePossible) downloadStatus(trackId) else null
         if (status == null && requireFullAudio) return null
         val song = SongInfo(
             source = source,

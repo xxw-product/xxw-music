@@ -296,3 +296,11 @@ two-module Gradle project.
 - Lyrics come from each source's own endpoint where one exists; the Python
   package's fallback `LyricSearchClient` is not ported, so a client without a
   native lyric endpoint returns no lyric instead of a searched one.
+
+### VPN-подписки (этап импорта)
+
+В настройках добавлен раздел «VPN для музыки»: можно импортировать URL-подписку или набор share-ссылок. Импортёр понимает VLESS, VMess, Trojan, Shadowsocks, Hysteria/Hysteria2, TUIC, AnyTLS, WireGuard и SOCKS/HTTP URI. Список серверов и исходные URI сохраняются в локальном хранилище, зашифрованном AES-GCM с ключом Android Keystore; URL подписок можно обновлять, отдельные записи — удалять.
+
+**Важно:** этот этап реализует импорт и защищённое хранение, но ещё не запускает VPN-туннель. В интерфейсе это явно обозначено; соединение не показывается как активное до подключения настоящего sing-box/libbox runtime. Для варианта «только внутри приложения» следующий этап должен добавить Android `VpnService` с `Builder.addAllowedApplication("com.musicdl.android")` и sing-box `include_package`, чтобы не маршрутизировать трафик других приложений. Само приложение при этом покажет системный диалог разрешения Android VPN.
+
+Встроенный `exitFy_v2.plugin` — плагин ExteraGram, не VPN-движок; его код не используется в приложении.

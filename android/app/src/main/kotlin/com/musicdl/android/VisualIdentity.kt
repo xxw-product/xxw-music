@@ -1,5 +1,13 @@
 package com.musicdl.android
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -41,6 +49,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import kotlin.math.*
+import kotlinx.coroutines.launch
 
 internal val Silver = Color(0xFFDDE0E5)
 internal val Vinyl = Color(0xFF050506)
@@ -431,10 +440,168 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     var soundcloudId by rememberSaveable { mutableStateOf(state.soundcloudClientId) }
     val used = state.downloadUsedBytes
     val limit = state.downloadLimitBytes
+    val vpnContext = LocalContext.current
+    val vpnRepository = remember(vpnContext) { VpnSubscriptionRepository(vpnContext) }
+    var vpnProfiles by remember { mutableStateOf(runCatching { vpnRepository.getProfiles() }.getOrDefault(emptyList())) }
+    var vpnInput by rememberSaveable { mutableStateOf("") }
+    val vpnPrefs = remember(vpnContext) { vpnContext.getSharedPreferences(MusicVpnService.PREFS, android.content.Context.MODE_PRIVATE) }
+    var vpnSelectedId by rememberSaveable { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_SELECTED_PROFILE, null) ?: vpnPrefs.getString(MusicVpnService.KEY_ACTIVE_PROFILE, null).orEmpty()) }
+    var vpnState by remember { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_STATE, MusicVpnService.STATE_DISCONNECTED) ?: MusicVpnService.STATE_DISCONNECTED) }
+    var vpnStatus by remember { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_MESSAGE, "").orEmpty()) }
+    var vpnBusy by remember { mutableStateOf(false) }
+    val vpnScope = rememberCoroutineScope()
+    val vpnPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.resultCode == android.app.Activity.RESULT_OK && vpnSelectedId.isNotBlank()) {
+            MusicVpnService.start(vpnContext, vpnSelectedId)
+        } else {
+            vpnStatus = "Разрешение Android на VPN не предоставлено"
+        }
+    }
+    DisposableEffect(vpnContext) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == MusicVpnService.ACTION_STATE) {
+                    vpnState = intent.getStringExtra(MusicVpnService.EXTRA_STATE) ?: vpnState
+                    vpnStatus = intent.getStringExtra(MusicVpnService.EXTRA_MESSAGE) ?: vpnStatus
+                }
+            }
+        }
+        val filter = IntentFilter(MusicVpnService.ACTION_STATE)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            vpnContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            vpnContext.registerReceiver(receiver, filter)
+        }
+        onDispose { runCatching { vpnContext.unregisterReceiver(receiver) } }
+    }
     val usedFraction = if (limit > 0L) (used.toFloat() / limit).coerceIn(0f, 1f) else 0f
     val full = limit in 1..used
     Column(Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         Text("Музыка в вашем ритме", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+
+        SettingsGroup("VPN для музыки") {
+            Text("Добавьте личную VPN-подписку или отдельную ссылку на сервер. Конфигурации хранятся на устройстве в зашифрованном виде.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = vpnInput,
+                onValueChange = { vpnInput = it.take(2 * 1024 * 1024) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("URL подписки или VLESS / VMess / Trojan / SS") },
+                minLines = 2,
+                maxLines = 4,
+                enabled = !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED,
+            )
+            Button(
+                onClick = {
+                    vpnBusy = true
+                    vpnStatus = "Импортируем подписку…"
+                    vpnScope.launch {
+                        runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vpnRepository.add(vpnInput) } }
+                            .onSuccess { updated ->
+                                vpnProfiles = updated
+                                if (vpnSelectedId.isBlank()) {
+                                    vpnSelectedId = updated.firstOrNull()?.id.orEmpty()
+                                    vpnPrefs.edit().putString(MusicVpnService.KEY_SELECTED_PROFILE, vpnSelectedId).apply()
+                                }
+                                vpnInput = ""
+                                vpnStatus = "Добавлено серверов: ${updated.size}"
+                            }
+                            .onFailure { error -> vpnStatus = error.message ?: "Не удалось импортировать подписку" }
+                        vpnBusy = false
+                    }
+                },
+                enabled = vpnInput.isNotBlank() && !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (vpnBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Rounded.Add, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Добавить подписку")
+            }
+            if (vpnProfiles.isNotEmpty()) {
+                Text("ВЫБЕРИТЕ СЕРВЕР", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            vpnProfiles.forEach { profile ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(if (vpnSelectedId == profile.id) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                        .clickable(enabled = vpnState != MusicVpnService.STATE_CONNECTED) {
+                            vpnSelectedId = profile.id
+                            vpnPrefs.edit().putString(MusicVpnService.KEY_SELECTED_PROFILE, profile.id).apply()
+                        }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = vpnSelectedId == profile.id,
+                        onClick = {
+                            if (vpnState != MusicVpnService.STATE_CONNECTED) {
+                                vpnSelectedId = profile.id
+                                vpnPrefs.edit().putString(MusicVpnService.KEY_SELECTED_PROFILE, profile.id).apply()
+                            }
+                        },
+                        enabled = vpnState != MusicVpnService.STATE_CONNECTED)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(profile.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Text("${profile.protocol} · ${profile.server}:${profile.port}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (profile.subscriptionUrl != null) {
+                        IconButton(enabled = !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED, onClick = {
+                            vpnBusy = true
+                            vpnStatus = "Обновляем подписку…"
+                            vpnScope.launch {
+                                runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vpnRepository.refresh(profile.subscriptionUrl) } }
+                                    .onSuccess { vpnProfiles = it; vpnStatus = "Подписка обновлена" }
+                                    .onFailure { vpnStatus = it.message ?: "Не удалось обновить подписку" }
+                                vpnBusy = false
+                            }
+                        }) { Icon(Icons.Rounded.Refresh, "Обновить подписку") }
+                    }
+                    IconButton(enabled = !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED, onClick = {
+                        vpnScope.launch {
+                            vpnProfiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vpnRepository.remove(profile.id) }
+                            if (vpnSelectedId == profile.id) {
+                                vpnSelectedId = vpnProfiles.firstOrNull()?.id.orEmpty()
+                                vpnPrefs.edit().putString(MusicVpnService.KEY_SELECTED_PROFILE, vpnSelectedId).apply()
+                            }
+                        }
+                    }) { Icon(Icons.Rounded.DeleteOutline, "Удалить сервер") }
+                }
+            }
+            Button(
+                onClick = {
+                    if (vpnState == MusicVpnService.STATE_CONNECTED || vpnState == MusicVpnService.STATE_CONNECTING) {
+                        MusicVpnService.stop(vpnContext)
+                    } else if (vpnSelectedId.isBlank()) {
+                        vpnStatus = "Сначала добавьте подписку и выберите сервер"
+                    } else {
+                        val permissionIntent = VpnService.prepare(vpnContext)
+                        if (permissionIntent == null) MusicVpnService.start(vpnContext, vpnSelectedId)
+                        else vpnPermissionLauncher.launch(permissionIntent)
+                    }
+                },
+                enabled = !vpnBusy && vpnProfiles.isNotEmpty() && vpnState != MusicVpnService.STATE_CONNECTING,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (vpnState == MusicVpnService.STATE_CONNECTED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                ),
+            ) {
+                Icon(if (vpnState == MusicVpnService.STATE_CONNECTED || vpnState == MusicVpnService.STATE_CONNECTING) Icons.Rounded.PowerSettingsNew else Icons.Rounded.Shield,
+                    contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(when (vpnState) {
+                    MusicVpnService.STATE_CONNECTED -> "Отключить VPN"
+                    MusicVpnService.STATE_CONNECTING -> "Подключаем…"
+                    else -> "Подключить VPN"
+                })
+            }
+            if (vpnStatus.isNotBlank()) Text(vpnStatus, style = MaterialTheme.typography.bodySmall,
+                color = if (vpnState == MusicVpnService.STATE_ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Через VPN направляется только трафик XXW Music. Остальные приложения телефона используют обычное подключение. Для подключения сейчас реализованы VLESS, VMess, Trojan и Shadowsocks. Для запуска Xray требуется собранная библиотека libv2ray.aar.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
 
         SettingsGroup("Музыкальные сервисы") {
             Text("Ваша музыка — в одном месте", style = MaterialTheme.typography.titleLarge,

@@ -1,9 +1,24 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// VK ID configuration is read from local.properties so the protected key is not
+// committed into the source tree. Create/update local.properties with:
+// VKIDClientID=54906914
+// VKIDClientSecret=<protected key from VK ID cabinet>
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.isFile) {
+        file.inputStream().use { input -> load(input) }
+    }
+}
+val vkIdClientId = localProperties.getProperty("VKIDClientID", "54906914")
+val vkIdClientSecret = localProperties.getProperty("VKIDClientSecret", "MISSING_VKID_CLIENT_SECRET")
 
 android {
     namespace = "com.musicdl.android"
@@ -13,29 +28,24 @@ android {
         applicationId = "com.musicdl.android"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = "1.0"
+        addManifestPlaceholders(
+            mapOf(
+                "VKIDClientID" to vkIdClientId,
+                "VKIDClientSecret" to vkIdClientSecret,
+                "VKIDRedirectHost" to "vk.ru",
+                "VKIDRedirectScheme" to "vk$vkIdClientId",
+            )
+        )
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Release signing: set KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD to use your own
-    // key. Without them the release APK is signed with the debug key, so it still installs.
-    val releaseKeystore = System.getenv("KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
-    signingConfigs {
-        if (releaseKeystore != null) {
-            create("release") {
-                storeFile = file(releaseKeystore)
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
-            }
-        }
-    }
-
     buildTypes {
+        debug {
+            // Keep the same applicationId so debug builds can update the existing app.
+        }
         release {
-            signingConfig = if (releaseKeystore != null) signingConfigs.getByName("release")
-                            else signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -62,7 +72,11 @@ android {
 
 dependencies {
     implementation(project(":musicdl-core"))
+    // Optional generated Xray AAR. Build it with .github/workflows/build-libv2ray.yml and copy it to app/libs/.
+    val libv2rayAar = file("libs/libv2ray.aar")
+    if (libv2rayAar.exists()) implementation(files(libv2rayAar))
     implementation(libs.okhttp)
+    implementation("com.vk.id:vkid:2.7.3")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -29,6 +29,12 @@ class WaveTest {
         assertTrue(ranked.take(10).map { it.singers }.distinct().size >= 8)
     }
 
+    @Test fun `wave can contain more than forty tracks`() {
+        val candidates = (1..70).map { song("track-$it", "Artist $it") }
+        val ranked = Wave.rank(candidates, emptyMap(), emptyMap())
+        assertEquals(70, ranked.size)
+    }
+
     @Test fun `same recording across providers appears once`() {
         val original = song("1", "Artist", title = "Song")
         val duplicate = original.copy(source = "QobuzMusicClient", identifier = "2")

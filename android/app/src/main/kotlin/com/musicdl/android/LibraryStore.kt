@@ -29,14 +29,22 @@ class LibraryStore(context: Context) {
     private val prefs = context.getSharedPreferences("musicdl_library", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; explicitNulls = false }
 
-    fun playlists(): List<MusicPlaylist> = runCatching {
-        json.parseToJsonElement(prefs.getString("playlists", "[]")!!).jsonArray.map { element ->
-            val obj = element.jsonObject
-            MusicPlaylist(obj.str("id")!!, obj.str("name")!!,
-                decodeSongs(obj["tracks"].toString()), obj.str("spotifyOwner"), obj.str("spotifyId"),
-                obj.str("syncUrl"), obj.str("lastSyncedAt")?.toLongOrNull() ?: 0L)
-        }
-    }.getOrDefault(emptyList())
+    // Decoding the legacy JSON snapshots can be expensive with a large offline library.
+    // Keep decoded snapshots in memory and invalidate them only when the corresponding data changes.
+    @Volatile private var cachedPlaylists: List<MusicPlaylist>? = null
+    @Volatile private var cachedLikes: List<SongInfo>? = null
+    @Volatile private var cachedDownloaded: List<SongInfo>? = null
+
+    fun playlists(): List<MusicPlaylist> = cachedPlaylists ?: synchronized(this) {
+        cachedPlaylists ?: runCatching {
+            json.parseToJsonElement(prefs.getString("playlists", "[]")!!).jsonArray.map { element ->
+                val obj = element.jsonObject
+                MusicPlaylist(obj.str("id")!!, obj.str("name")!!,
+                    decodeSongs(obj["tracks"].toString()), obj.str("spotifyOwner"), obj.str("spotifyId"),
+                    obj.str("syncUrl"), obj.str("lastSyncedAt")?.toLongOrNull() ?: 0L)
+            }
+        }.getOrDefault(emptyList()).also { cachedPlaylists = it }
+    }
 
     fun savePlaylists(items: List<MusicPlaylist>) {
         val array = kotlinx.serialization.json.JsonArray(items.map { playlist -> buildJsonObject {
@@ -47,6 +55,7 @@ class LibraryStore(context: Context) {
             put("tracks", json.parseToJsonElement(encodeSongs(playlist.tracks)))
         } })
         prefs.edit().putString("playlists", array.toString()).apply()
+        cachedPlaylists = items
     }
 
     // ---------------------------------------------------------------- settings
@@ -123,7 +132,9 @@ class LibraryStore(context: Context) {
     // ---------------------------------------------------------------- likes
 
     /** Liked tracks, newest first. */
-    fun likes(): List<SongInfo> = decodeSongs(prefs.getString(KEY_LIKES, null))
+    fun likes(): List<SongInfo> = cachedLikes ?: synchronized(this) {
+        cachedLikes ?: decodeSongs(prefs.getString(KEY_LIKES, null)).also { cachedLikes = it }
+    }
 
     fun isLiked(key: String): Boolean = likes().any { it.key() == key }
 
@@ -131,7 +142,9 @@ class LibraryStore(context: Context) {
     /** Idempotent add used by imports: no duplicate likes, no reset of the existing list. */
     fun addLike(song: SongInfo): Boolean {
         if (isLiked(song.key())) return false
-        prefs.edit().putString(KEY_LIKES, encodeSongs((listOf(song) + likes()).take(MAX_LIKES))).apply()
+        val updated = (listOf(song) + likes()).take(MAX_LIKES)
+        prefs.edit().putString(KEY_LIKES, encodeSongs(updated)).apply()
+        cachedLikes = updated
         return true
     }
 
@@ -143,7 +156,9 @@ class LibraryStore(context: Context) {
         } else {
             listOf(song) + current
         }
-        prefs.edit().putString(KEY_LIKES, encodeSongs(updated.take(MAX_LIKES))).apply()
+        val bounded = updated.take(MAX_LIKES)
+        prefs.edit().putString(KEY_LIKES, encodeSongs(bounded)).apply()
+        cachedLikes = bounded
         return existing == null
     }
 
@@ -155,10 +170,14 @@ class LibraryStore(context: Context) {
             .putString("downloaded_tracks", encodeSongs(downloads))
             .putString(KEY_LIKES, encodeSongs(likes))
             .apply()
+        cachedDownloaded = downloads
+        cachedLikes = likes
     }
 
     /** Snapshot of every downloaded track, in download order. */
-    fun downloaded(): List<SongInfo> = decodeSongs(prefs.getString("downloaded_tracks", null))
+    fun downloaded(): List<SongInfo> = cachedDownloaded ?: synchronized(this) {
+        cachedDownloaded ?: decodeSongs(prefs.getString("downloaded_tracks", null)).also { cachedDownloaded = it }
+    }
 
     fun savedPathFor(key: String): String? = decodeSongs(prefs.getString("downloaded_tracks", null))
         .firstOrNull { it.key() == key }?.downloadUrl
@@ -172,14 +191,23 @@ class LibraryStore(context: Context) {
         val downloads = decodeSongs(prefs.getString("downloaded_tracks", null))
         val editor = prefs.edit()
         if (addToLikes) editor.putString(KEY_LIKES, encodeSongs(updated.take(MAX_LIKES)))
+        val newDownloads = listOf(local) + downloads.filterNot { it.key() == song.key() }
         editor
-            .putString("downloaded_tracks", encodeSongs(listOf(local) + downloads.filterNot { it.key() == song.key() }))
+            .putString("downloaded_tracks", encodeSongs(newDownloads))
             .apply()
+        cachedDownloaded = newDownloads
+        if (addToLikes) cachedLikes = updated.take(MAX_LIKES)
     }
 
     /** Independent of likes: unliking a download must not disable offline playback. */
     fun localFileFor(song: SongInfo): java.io.File? {
-        val downloads = decodeSongs(prefs.getString("downloaded_tracks", null)) + likes()
+        // Reuse the in-memory decoded snapshot. The old implementation decoded the entire
+        // downloaded-library JSON on every play; when the wave immediately started its first
+        // track that disk/JSON work happened on the UI thread and could trigger an ANR.
+        // A local file is recorded in downloaded_tracks. Do not append the whole likes snapshot
+        // here: with a large library that creates another multi-thousand-element list on every
+        // play tap for no benefit.
+        val downloads = downloaded()
         val candidates = listOf(song) + downloads.filter { it.key() == song.key() || it.sameRecording(song) }
         return candidates.asSequence().mapNotNull { track ->
             val uri = runCatching { java.net.URI(track.downloadUrl.orEmpty()) }.getOrNull()

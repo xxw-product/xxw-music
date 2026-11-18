@@ -1,153 +1,134 @@
 package com.musicdl.android
 
-import android.graphics.Bitmap
-import android.net.Uri
-import android.webkit.CookieManager
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import com.vk.id.VKID
+import com.vk.id.AccessToken
+import com.vk.id.VKIDAuthFail
+import com.vk.id.auth.VKIDAuthCallback
+import com.vk.id.auth.VKIDAuthParams
 
-private const val VK_AUTH_URL =
-    "https://oauth.vk.com/authorize?client_id=2685278" +
-        "&scope=audio,offline&redirect_uri=https%3A%2F%2Foauth.vk.com%2Fblank.html" +
-        "&display=mobile&response_type=token&v=5.199"
-
-/** Only accept credentials from the exact OAuth callback, never a lookalike URL. */
-internal fun vkLoginCallback(url: String): Pair<String?, String?>? {
-    val uri = Uri.parse(url)
-    if (uri.scheme != "https" || uri.host != "oauth.vk.com" || uri.path != "/blank.html" ||
-        uri.port !in listOf(-1, 443) || uri.userInfo != null) return null
-    val params = Uri.parse("https://callback.invalid/?${uri.fragment.orEmpty()}")
-    val token = params.getQueryParameter("access_token")?.takeIf { it.isNotBlank() }
-    val error = params.getQueryParameter("error")
-    return token to if (error != null) "VK не разрешил вход. Повторите или используйте токен с доступом к музыке" else null
-}
-
+/**
+ * VK ID authorization for XXW Music.
+ *
+ * The old implementation embedded oauth.vk.ru in a WebView and explicitly blocked
+ * external VK app links. That is the reason the current flow can end on a blank page
+ * after choosing "Войти через приложение". VK's current Android SDK owns the browser/app
+ * hand-off and the redirect back into the Android package.
+ */
 @Composable
 internal fun VkLoginDialog(onToken: (String) -> Unit, onClose: () -> Unit) {
-    var browser by remember { mutableStateOf<WebView?>(null) }
-    var loading by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
-    var handled by remember { mutableStateOf(false) }
-    LaunchedEffect(loading) {
-        if (loading) {
-            kotlinx.coroutines.delay(30_000)
-            if (loading && !handled) {
-                loading = false
-                failure = "Страница VK не завершила загрузку. Проверьте соединение и повторите вход"
-            }
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            browser?.apply { stopLoading(); destroy() }
-            browser = null
-            CookieManager.getInstance().flush()
-        }
-    }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        BackHandler {
-            if (browser?.canGoBack() == true) browser?.goBack() else onClose()
-        }
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
-                Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, "Закрыть") }
-                    Column(Modifier.weight(1f)) {
-                        Text("Подключить VK", style = MaterialTheme.typography.titleMedium)
-                        Text("Вход на сайте VK · пароль не сохраняется приложением",
-                            style = MaterialTheme.typography.bodySmall)
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    BackHandler(enabled = !busy) { onClose() }
+
+    Dialog(
+        onDismissRequest = { if (!busy) onClose() },
+        properties = DialogProperties(usePlatformDefaultWidth = true),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.background,
+            shape = MaterialTheme.shapes.extraLarge,
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Подключить VK", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "Авторизация через VK ID",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    IconButton(onClick = onClose, enabled = !busy) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Закрыть")
                     }
                 }
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                failure?.let { message ->
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(message, color = MaterialTheme.colorScheme.error)
-                        Text("Если сайт не открывается, обновите Android System WebView и Chrome. Не меняйте сеть во время входа.",
-                            style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = { failure = null; loading = true; browser?.loadUrl(VK_AUTH_URL) }) {
-                            Text("Повторить вход")
-                        }
+
+                failure?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+
+                if (busy) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            busy = true
+                            failure = null
+                            VKID.instance.authorize(
+                                lifecycleOwner = lifecycleOwner,
+                                callback = object : VKIDAuthCallback {
+                                    override fun onAuth(accessToken: AccessToken) {
+                                        busy = false
+                                        onToken(accessToken.token)
+                                    }
+
+                                    override fun onFail(fail: VKIDAuthFail) {
+                                        busy = false
+                                        failure = when (fail) {
+                                            is VKIDAuthFail.Canceled -> "Вход отменён"
+                                            else -> "VK ID не завершил авторизацию. Повторите вход."
+                                        }
+                                    }
+                                },
+                                params = VKIDAuthParams {
+                                    // Required by the existing VKMusicClient for audio.search.
+                                    scopes = setOf("audio", "offline")
+                                },
+                            )
+                        },
+                    ) {
+                        Text("Войти через VK ID")
                     }
                 }
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    factory = { context ->
-                        WebView(context).apply {
-                            browser = this
-                            webChromeClient = android.webkit.WebChromeClient()
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.allowFileAccess = false
-                            settings.allowContentAccess = false
-                            CookieManager.getInstance().setAcceptCookie(true)
-                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                            webViewClient = object : WebViewClient() {
-                                private fun capture(url: String): Boolean {
-                                    val result = vkLoginCallback(url) ?: return false
-                                    if (handled) return true
-                                    result.first?.let {
-                                        handled = true
-                                        stopLoading()
-                                        onToken(it)
-                                        return true
-                                    }
-                                    result.second?.let { failure = it; loading = false; return true }
-                                    return false
-                                }
-                                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                                    if (!request.isForMainFrame) return false
-                                    if (capture(request.url.toString())) return true
-                                    // Do not let native-app deep links strand the embedded OAuth flow.
-                                    if (request.url.scheme !in listOf("https", "http")) {
-                                        failure = "VK предложил открыть внешнее приложение. Вернитесь и выберите вход на сайте"
-                                        loading = false
-                                        return true
-                                    }
-                                    return false
-                                }
-                                override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                                    if (!capture(url)) { loading = true; failure = null }
-                                }
-                                override fun onPageFinished(view: WebView, url: String) {
-                                    loading = false
-                                    capture(url)
-                                    CookieManager.getInstance().flush()
-                                }
-                                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                                    capture(url)
-                                }
-                                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                                    if (request.isForMainFrame) {
-                                        loading = false
-                                        failure = "Не удалось загрузить страницу VK. Проверьте интернет и повторите вход"
-                                    }
-                                }
-                                override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-                                    if (request.isForMainFrame) {
-                                        loading = false
-                                        failure = "Страница входа VK ответила HTTP ${response.statusCode}. Повторите позже"
-                                    }
-                                }
-                                // SSL errors retain WebView's default cancellation; never bypass certificate checks.
-                            }
-                            loadUrl(VK_AUTH_URL)
-                        }
-                    },
+
+                Text(
+                    "Пароль вводится на стороне VK ID и не передаётся приложению.",
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         }

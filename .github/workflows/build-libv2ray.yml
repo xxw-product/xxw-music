@@ -1,0 +1,42 @@
+name: Build Android Xray library
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/xray/AndroidLibXrayLite/**'
+      - '.github/workflows/build-libv2ray.yml'
+
+jobs:
+  build-libv2ray:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Go from library go.mod
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: android/xray/AndroidLibXrayLite/go.mod
+      - name: Install gomobile
+        run: go install golang.org/x/mobile/cmd/gomobile@latest
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+      - name: Install NDK
+        run: |
+          yes | sdkmanager --install 'ndk;29.0.14206865'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Build AAR
+        working-directory: android/xray/AndroidLibXrayLite
+        run: |
+          mkdir -p assets data
+          bash gen_assets.sh download
+          cp -v data/*.dat assets/
+          gomobile init
+          go mod tidy
+          gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libv2ray-android
+          path: android/xray/AndroidLibXrayLite/libv2ray.aar
+          if-no-files-found: error

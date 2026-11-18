@@ -44,8 +44,6 @@ class WaveEngine(
     private val accept: (SongInfo) -> Boolean,
     private val enrich: suspend (SongInfo) -> SongInfo,
     private val report: (String) -> Unit,
-    /** Recording keys the listener already owns (likes, downloads, playlists): a wave is for discovery. */
-    private val owned: Set<String> = emptySet(),
 ) {
     private val queryTimeoutMs = 9_000L
     private val sourceTimeoutMs = 6_000L
@@ -65,10 +63,8 @@ class WaveEngine(
             val collected = java.util.Collections.synchronizedList(ArrayList<SongInfo>())
             val knownArtists = profile.artists.keys.toList()
 
-            var skippedOwned = 0
             fun addAll(song: SongInfo) {
                 synchronized(collected) {
-                    if (Wave.recordingKey(song) in owned) { skippedOwned++; return }
                     if (collected.none { Wave.recordingKey(it) == Wave.recordingKey(song) }) collected.add(song)
                 }
             }
@@ -92,8 +88,8 @@ class WaveEngine(
                     allowGlobalCatalog = true, notes = notes, sink = ::addAll)
             }
 
-            if (unique().size < 40) {
-                val genreSeeds = Wave.genreSeeds(profile, generation).take(8)
+            if (unique().size < 14) {
+                val genreSeeds = Wave.genreSeeds(profile, generation).take(10)
                 if (genreSeeds.isNotEmpty()) {
                     report("Волна: расширяем жанры")
                     searchStage(client, genreSeeds, profile, knownArtists,
@@ -117,16 +113,14 @@ class WaveEngine(
 
             val candidates = unique()
             if (candidates.isEmpty()) {
-                val why = if (skippedOwned > 0) "все найденные треки уже есть в вашей библиотеке ($skippedOwned)"
-                else "источники не ответили"
-                throw WaveUnavailable("Волна пуста: $why. ${notes.joinToString("; ")}".trim())
+                throw WaveUnavailable("Источники не ответили. Проверьте соединение и повторите.")
             }
 
             report("Волна: уточняем жанры · ${candidates.size}")
             val enriched = enrichCandidates(candidates.take(150))
                 // Enrichment may add catalog genres; a record that turned out to be foreign is not
                 // a recommendation, so the filter runs again before ranking.
-                .filterNot { Wave.isForeignCulture(it, profile) || Wave.recordingKey(it) in owned }
+                .filterNot { Wave.isForeignCulture(it, profile) }
             val ranked = Wave.rank(
                 results = enriched,
                 coefficients = profile.genres,

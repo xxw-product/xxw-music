@@ -506,7 +506,7 @@ object Wave {
             }.sortedByDescending { it.second }.toMutableList()
         val selected = mutableListOf<SongInfo>()
         val artistCounts = mutableMapOf<String, Int>()
-        while (candidates.isNotEmpty() && selected.size < 40) {
+        while (candidates.isNotEmpty() && selected.size < 150) {
             val recentArtists = selected.takeLast(3).flatMap { artistNames(it.singers) }.map(::normalize).toSet()
             val eligible = candidates.filter { (song, _) ->
                 artistNames(song.singers).none { (artistCounts[normalize(it)] ?: 0) >= 2 || normalize(it) in recentArtists }

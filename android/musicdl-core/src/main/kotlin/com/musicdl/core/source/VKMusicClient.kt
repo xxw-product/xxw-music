@@ -5,6 +5,7 @@ import com.musicdl.core.model.SongInfo
 import com.musicdl.core.net.textOrNull
 import com.musicdl.core.util.JsonUtil
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -14,11 +15,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  *
  * Limits that shaped this implementation:
  *
- * 1. **Account required.** `audio.search` is not available anonymously and VK does not grant audio
- *    access to newly registered standalone apps. The client therefore stays disabled until the user
- *    supplies an access token from an application that already has audio permission
- *    (`vk_access_token` in the client cookies). Without it [constructSearchUrls] returns nothing and
- *    the client logs why — it never pretends to search.
+ * 1. **Account required.** VK's current music surface is separate from the public v5 API. The
+ *    client therefore requires a VK access token and uses the current catalog/audio request shape.
+ *    If VK rejects the token for music access, the source remains disabled and reports the server
+ *    error instead of pretending that the catalog is available.
  * 2. **Terms and copyright.** Audio returned by VK is licensed per account/region, and the platform
  *    terms forbid redistributing it. This client is a read-only personal-catalog bridge: it is not
  *    in the default source set, it hides nothing from VK, and it downloads only what the user's own
@@ -33,17 +33,25 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
     private val token: String? = listOf("vk_access_token", "access_token", "token")
         .firstNotNullOfOrNull { key -> config.defaultSearchCookies[key]?.trim()?.takeIf(String::isNotEmpty) }
 
-    private val apiVersion = "5.199"
+    // VK's current music client uses a separate catalog/audio API surface.
+    // Keep the public API version out of this client: audio.search on v5.x now
+    // reports Unknown method for this flow.
+    private val musicApiVersion = "8.154"
+    private val musicApiHost = "https://api.vk.ru/method/"
 
     var lastError: String? = null
         private set
 
-    /** Check audio permission, not just whether VK recognizes the account token. */
+    /** Check the current VK Music catalog endpoint rather than the retired public audio.search call. */
     fun checkAccess(): String? {
         lastError = null
         if (token.isNullOrBlank()) return "VK: сначала войдите в аккаунт"
-        if (apiCall("audio.search", mapOf("q" to "music", "count" to "1")) == null) {
-            return lastError ?: "VK не ответил. Проверьте интернет и повторите подключение"
+        val probe = musicApiCall(
+            "catalog.getAudioSearch",
+            mapOf("query" to "test", "extended" to "1", "need_blocks" to "1"),
+        )
+        if (probe == null) {
+            return lastError ?: "VK Музыка не ответила. Повторите подключение"
         }
         return null
     }
@@ -55,6 +63,9 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
         15, 7 -> "VK не разрешил доступ к музыке этому токену. Нужен вход с правом audio"
         14 -> "VK просит капчу. Откройте VK в браузере, подтвердите вход и повторите"
         17 -> "VK просит подтвердить аккаунт на своём сайте"
+        3 -> "VK: этот метод недоступен для текущего токена"
+        8 -> "VK: музыкальный API отклонил версию запроса"
+        104 -> "VK: музыкальный раздел не найден или сессия устарела. Подключите VK заново"
         6, 9, 29 -> "VK ограничил частоту запросов. Подождите и повторите"
         else -> "VK: ошибка API ${JsonUtil.int(error, "error_code") ?: 0}. Повторите позже"
     }
@@ -68,22 +79,13 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
     }
 
     override fun constructSearchUrls(keyword: String, rule: Map<String, String>): List<String> {
-        val access = token ?: run {
+        if (token.isNullOrBlank()) {
             logger.warning("$source >>> no vk_access_token configured, skipping search")
             return emptyList()
         }
-        val pageSize = searchSizePerPage.coerceAtLeast(1)
-        val endpoint = "https://api.vk.com/method/audio.search".toHttpUrl()
-        return (0 until searchSizePerSource step pageSize).map { offset ->
-            endpoint.newBuilder().apply {
-                setQueryParameter("q", keyword)
-                setQueryParameter("count", pageSize.toString())
-                setQueryParameter("offset", offset.toString())
-                setQueryParameter("access_token", access)
-                setQueryParameter("v", apiVersion)
-                rule.forEach { (key, value) -> setQueryParameter(key, value) }
-            }.build().toString()
-        }
+        // The actual request is a POST to catalog.getAudioSearch. The returned URL is only
+        // a marker for BaseMusicClient's per-page progress accounting.
+        return listOf("vk-music-search://${keyword.trim()}")
     }
 
     override suspend fun searchOne(
@@ -92,23 +94,80 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
         results: MutableList<SongInfo>,
         progress: SearchProgress,
     ) {
-        val body = http.get(searchUrl, extraHeaders = searchHeaders)?.use { it.textOrNull() } ?: return
-        val root = JsonUtil.parseObject(body) ?: return
-        JsonUtil.obj(root, "error")?.let { error ->
-            lastError = apiError(error)
-            logger.error("$source >>> $lastError")
-            return
+        val root = musicApiCall(
+            "catalog.getAudioSearch",
+            mapOf(
+                "query" to keyword,
+                "extended" to "1",
+                "need_blocks" to "1",
+            ),
+        ) ?: return
+
+        val response = root["response"] as? JsonObject ?: return
+        var items = collectAudioObjects(response)
+
+        // Search results can be returned as a catalog pointer. Follow its default section
+        // when the envelope does not contain the audio package directly.
+        if (items.isEmpty()) {
+            val catalog = JsonUtil.obj(response, "catalog")
+            val sectionId = catalog?.let { JsonUtil.str(it, "default_section") }
+            if (!sectionId.isNullOrBlank()) {
+                musicApiCall(
+                    "catalog.getSection",
+                    mapOf("section_id" to sectionId, "extended" to "1", "need_blocks" to "1"),
+                )?.let { sectionRoot ->
+                    val sectionResponse = sectionRoot["response"] as? JsonObject
+                    if (sectionResponse != null) items = collectAudioObjects(sectionResponse)
+                }
+            }
         }
-        val items = when (val response = root["response"]) {
-            is JsonArray -> response.filterIsInstance<JsonObject>()
-            is JsonObject -> JsonUtil.array(response, "items").orEmpty().filterIsInstance<JsonObject>()
-            else -> emptyList()
-        }
-        items.forEachIndexed { index, item ->
-            progress.onSourceTask(source, "$source._search >>> ${index + 1}/${items.size} results", index + 1, items.size)
+
+        // Refresh stream URLs in small batches. VK may return metadata first and an empty/masked
+        // URL in the search envelope; audio.getById is the normal follow-up for fresh URLs.
+        val refreshed = refreshAudioItems(items)
+        val usable = if (refreshed.isNotEmpty()) refreshed else items
+        usable.forEachIndexed { index, item ->
+            progress.onSourceTask(source, "$source._search >>> ${index + 1}/${usable.size} results", index + 1, usable.size)
             runCatching { parseSong(item) }.getOrNull()?.let(results::add)
             if (strictLimitSearchSizePerPage && results.size >= searchSizePerPage) return
         }
+    }
+
+    private fun collectAudioObjects(root: JsonObject): List<JsonObject> {
+        val found = LinkedHashMap<String, JsonObject>()
+        fun walk(element: JsonElement) {
+            when (element) {
+                is JsonObject -> {
+                    val id = JsonUtil.str(element, "id")
+                    val owner = JsonUtil.str(element, "owner_id")
+                    val title = JsonUtil.str(element, "title")
+                    val artist = JsonUtil.str(element, "artist")
+                    val looksLikeAudio = id != null && owner != null && title != null && artist != null
+                    if (looksLikeAudio) found["$owner:$id"] = element
+                    element.values.forEach(::walk)
+                }
+                is JsonArray -> element.forEach(::walk)
+                else -> Unit
+            }
+        }
+        walk(root)
+        return found.values.toList()
+    }
+
+    private fun refreshAudioItems(items: List<JsonObject>): List<JsonObject> {
+        if (items.isEmpty()) return emptyList()
+        val ids = items.mapNotNull { item ->
+            val owner = JsonUtil.str(item, "owner_id")
+            val id = JsonUtil.str(item, "id")
+            if (!owner.isNullOrBlank() && !id.isNullOrBlank()) "${owner}_$id" else null
+        }.distinct()
+        val refreshed = ArrayList<JsonObject>()
+        ids.chunked(10).forEach { chunk ->
+            val root = musicApiCall("audio.getById", mapOf("audios" to chunk.joinToString(","))) ?: return@forEach
+            val response = root["response"] as? JsonArray ?: return@forEach
+            response.filterIsInstance<JsonObject>().forEach { refreshed += it }
+        }
+        return refreshed
     }
 
     /**
@@ -123,7 +182,7 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
             return emptyList()
         }
         val items = when (link.kind) {
-            "audio" -> apiCall("audio.getById", mapOf("audios" to link.audioId))
+            "audio" -> musicApiCall("audio.getById", mapOf("audios" to link.audioId))
                 ?.let { (it["response"] as? JsonArray).orEmpty().filterIsInstance<JsonObject>() }
                 .orEmpty()
             "playlist" -> audioPages(
@@ -191,7 +250,7 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
         val items = ArrayList<JsonObject>()
         var offset = 0
         while (true) {
-            val root = apiCall("audio.get", params + mapOf("count" to "1000", "offset" to offset.toString())) ?: break
+            val root = musicApiCall("audio.get", params + mapOf("count" to "200", "offset" to offset.toString())) ?: break
             val response = root["response"]
             val page = when (response) {
                 is JsonObject -> JsonUtil.array(response, "items").orEmpty().filterIsInstance<JsonObject>()
@@ -202,16 +261,43 @@ class VKMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
             items += page
             offset += page.size
             val total = (response as? JsonObject)?.let { JsonUtil.int(it, "count") } ?: 0
-            if (total in 1..offset || page.size < 1000) break
+            if (total in 1..offset || page.size < 200) break
         }
         return items
+    }
+
+    private fun musicApiCall(method: String, params: Map<String, String>): JsonObject? {
+        val access = token ?: return null
+        val form = buildMap {
+            put("access_token", access)
+            put("v", musicApiVersion)
+            put("lang", "ru")
+            put("extended", "1")
+            config.defaultSearchCookies["vk_device_id"]?.trim()?.takeIf { it.isNotEmpty() }?.let { put("device_id", it) }
+            putAll(params)
+        }
+        val headers = searchHeaders + mapOf(
+            "X-VK-Android-Client" to "new",
+            "Referer" to "https://id.vk.ru",
+            "Origin" to "https://id.vk.ru",
+            "Accept" to "application/json",
+        )
+        val url = musicApiHost + method
+        val root = http.postForm(url, form = form, extraHeaders = headers, tag = "vk-music-$method")
+            ?.use { JsonUtil.parseObject(it.textOrNull()) } ?: return null
+        JsonUtil.obj(root, "error")?.let { error ->
+            lastError = apiError(error)
+            logger.error("$source >>> $lastError")
+            return null
+        }
+        return root
     }
 
     private fun apiCall(method: String, params: Map<String, String>): JsonObject? {
         val access = token ?: return null
         val url = "https://api.vk.com/method/$method".toHttpUrl().newBuilder().apply {
             setQueryParameter("access_token", access)
-            setQueryParameter("v", apiVersion)
+            setQueryParameter("v", "5.199")
             params.forEach { (key, value) -> setQueryParameter(key, value) }
         }.build().toString()
         val root = http.get(url, extraHeaders = searchHeaders)?.use { JsonUtil.parseObject(it.textOrNull()) } ?: return null

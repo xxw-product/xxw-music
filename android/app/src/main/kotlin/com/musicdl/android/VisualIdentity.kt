@@ -442,6 +442,8 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     val vpnRepository = remember(vpnContext) { VpnSubscriptionRepository(vpnContext) }
     var vpnProfiles by remember { mutableStateOf(runCatching { vpnRepository.getProfiles() }.getOrDefault(emptyList())) }
     var vpnInput by rememberSaveable { mutableStateOf("") }
+    val vpnPings = remember { mutableStateMapOf<String, Long>() }
+    var vpnPinging by remember { mutableStateOf(false) }
     var vpnClient by remember { mutableStateOf(vpnRepository.subscriptionClient) }
     val vpnPrefs = remember(vpnContext) { vpnContext.getSharedPreferences(MusicVpnService.PREFS, android.content.Context.MODE_PRIVATE) }
     var vpnSelectedId by rememberSaveable { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_SELECTED_PROFILE, null) ?: vpnPrefs.getString(MusicVpnService.KEY_ACTIVE_PROFILE, null).orEmpty()) }
@@ -532,8 +534,25 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Text("Добавить подписку")
             }
             if (vpnProfiles.isNotEmpty()) {
-                Text("ВЫБЕРИТЕ СЕРВЕР", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("ВЫБЕРИТЕ СЕРВЕР", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    TextButton(
+                        enabled = !vpnPinging && vpnState != MusicVpnService.STATE_CONNECTED,
+                        onClick = {
+                            vpnPinging = true
+                            vpnProfiles.forEach { vpnPings[it.id] = PING_MEASURING }
+                            vpnScope.launch {
+                                ServerPing.pingAll(vpnProfiles) { id, ms -> vpnPings[id] = ms }
+                                vpnPinging = false
+                            }
+                        },
+                    ) { Text(if (vpnPinging) "Проверяем…" else "Проверить пинг") }
+                }
+                if (vpnState == MusicVpnService.STATE_CONNECTED) {
+                    Text("Чтобы замерить пинг, отключите VPN: при включённом туннеле замер был бы неточным.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             vpnProfiles.forEach { profile ->
                 Row(
@@ -558,6 +577,14 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                         Text(profile.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         Text("${profile.protocol} · ${profile.server}:${profile.port}",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        vpnPings[profile.id]?.let { ms ->
+                            val (label, color) = pingLabel(ms)
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = color,
+                                modifier = Modifier.clickable(enabled = ms != PING_MEASURING && vpnState != MusicVpnService.STATE_CONNECTED) {
+                                    vpnPings[profile.id] = PING_MEASURING
+                                    vpnScope.launch { vpnPings[profile.id] = ServerPing.ping(profile) }
+                                })
+                        }
                     }
                     if (profile.subscriptionUrl != null) {
                         IconButton(enabled = !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED, onClick = {
@@ -927,4 +954,17 @@ private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> 
             Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
         }
     }
+}
+
+private const val PING_MEASURING = -2L
+
+/** Text and colour for a ping value; green is comfortable, red is slow or unreachable. */
+@Composable
+private fun pingLabel(ms: Long): Pair<String, Color> = when {
+    ms == PING_MEASURING -> "измеряем…" to MaterialTheme.colorScheme.onSurfaceVariant
+    ms == ServerPing.UNSUPPORTED -> "пинг не поддерживается (UDP)" to MaterialTheme.colorScheme.onSurfaceVariant
+    ms < 0 -> "недоступен" to MaterialTheme.colorScheme.error
+    ms < 150 -> "$ms мс" to Color(0xFF4CAF50)
+    ms < 400 -> "$ms мс" to Color(0xFFFFB300)
+    else -> "$ms мс" to MaterialTheme.colorScheme.error
 }

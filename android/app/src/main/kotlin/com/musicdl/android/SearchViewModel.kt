@@ -262,6 +262,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private val playerListener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) brokenInRow = 0
                 publishPlayer()
                 persistPlayback()
             }
@@ -281,6 +282,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     refreshPlayback(song, player.currentPosition.coerceAtLeast(0L))
                 } else {
                     _messages.tryEmit("Не удалось открыть трек: ${error.errorCodeName}")
+                    skipBrokenWaveTrack(song)
                 }
             }
 
@@ -1018,6 +1020,20 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _messages.tryEmit(if (id.isBlank()) "SoundCloud будет искать client_id сам" else "client_id SoundCloud сохранён")
     }
 
+    private var brokenInRow = 0
+
+    /**
+     * A wave must never stall on one dead link: when a wave track cannot be opened even after its
+     * link was refreshed, move on to the next one (at most a few in a row, so an offline phone
+     * does not burn through the whole queue).
+     */
+    private fun skipBrokenWaveTrack(song: SongInfo?) {
+        if (song == null || playbackQueue.isEmpty || brokenInRow >= 5) return
+        if (_state.value.wave.none { it.key() == song.key() }) return
+        brokenInRow++
+        advanceQueue()
+    }
+
     private var refreshJob: Job? = null
     private var refreshAttempted = false
     private var playGeneration = 0L
@@ -1041,6 +1057,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (fresh == null) {
                     _state.update { it.copy(player = it.player.copy(isBuffering = false)) }
                     _messages.tryEmit("Ссылка недоступна: ${result.summary()}")
+                    skipBrokenWaveTrack(song)
                     return@launch
                 }
                 playbackQueue.replace(fresh)
@@ -1058,6 +1075,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (generation == playGeneration) {
                     _state.update { it.copy(player = it.player.copy(isBuffering = false)) }
                     _messages.tryEmit("Не удалось обновить ссылку на трек")
+                    skipBrokenWaveTrack(song)
                 }
             }
         }
@@ -1123,6 +1141,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val localFile = library.localFileFor(song)
         val url = localFile?.toURI()?.toString() ?: song.downloadUrl ?: run {
             _messages.tryEmit("Нет рабочей ссылки: ${song.songName}")
+            skipBrokenWaveTrack(song)
             return
         }
         val headers = buildMap {

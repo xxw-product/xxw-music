@@ -956,11 +956,11 @@ private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> 
     }
 }
 
-private const val PING_MEASURING = -2L
+internal const val PING_MEASURING = -2L
 
 /** Text and colour for a ping value; green is comfortable, red is slow or unreachable. */
 @Composable
-private fun pingLabel(ms: Long): Pair<String, Color> = when {
+internal fun pingLabel(ms: Long): Pair<String, Color> = when {
     ms == PING_MEASURING -> "измеряем…" to MaterialTheme.colorScheme.onSurfaceVariant
     ms == ServerPing.UNSUPPORTED -> "пинг не поддерживается (UDP)" to MaterialTheme.colorScheme.onSurfaceVariant
     ms < 0 -> "недоступен" to MaterialTheme.colorScheme.error

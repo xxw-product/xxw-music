@@ -343,6 +343,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                             onToggleWeights = { showWeights = !showWeights },
                             onStart = viewModel::startWave,
                             onWeight = viewModel::setGenreWeight,
+                            onOpenVpnSettings = { viewModel.setTab(FeedTab.SETTINGS) },
                         )
                     }
                 }
@@ -648,6 +649,7 @@ internal fun WaveCard(
     onToggleWeights: () -> Unit,
     onStart: () -> Unit,
     onWeight: (String, Float) -> Unit,
+    onOpenVpnSettings: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
@@ -670,6 +672,7 @@ internal fun WaveCard(
                     )
                 }
                 Equalizer(active = state.player.isPlaying, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                VpnMenuButton(onOpenSettings = onOpenVpnSettings, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
             Spacer(Modifier.height(40.dp))

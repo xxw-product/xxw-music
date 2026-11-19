@@ -144,7 +144,7 @@ class MusicVpnService : VpnService() {
         seq.getMethod("setContext", Context::class.java).invoke(null, applicationContext)
         val lib = Class.forName("libv2ray.Libv2ray")
         lib.getMethod("initCoreEnv", String::class.java, String::class.java)
-            .invoke(null, "", androidId())
+            .invoke(null, "", xudpBaseKey())
         val callbackType = Class.forName("libv2ray.CoreCallbackHandler")
         val callback = Proxy.newProxyInstance(callbackType.classLoader, arrayOf(callbackType)) { _, method, _ ->
             when (method.name.lowercase()) {
@@ -161,6 +161,9 @@ class MusicVpnService : VpnService() {
     private fun androidId(): String = runCatching {
         android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID)
     }.getOrNull().orEmpty().ifBlank { "xxw-music-android" }
+
+    /** Xray wants exactly 32 bytes encoded as unpadded base64url; this one is stable per device. */
+    private fun xudpBaseKey(): String = XudpKey.derive(androidId() + packageName)
 
     private fun stopTunnel() {
         worker.execute {

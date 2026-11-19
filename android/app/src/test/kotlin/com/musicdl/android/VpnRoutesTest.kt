@@ -44,4 +44,10 @@ class VpnRoutesTest {
         assertTrue(covers(routes, "10.0.0.3"))
         assertTrue(covers(routes, "1.1.1.1"))
     }
+
+    @Test fun xudpBaseKeyIsThirtyTwoBytes() {
+        val key = XudpKey.derive("device-id" + "com.musicdl.android")
+        assertEquals(32, java.util.Base64.getUrlDecoder().decode(key).size)
+        assertEquals(key, XudpKey.derive("device-id" + "com.musicdl.android"))
+    }
 }

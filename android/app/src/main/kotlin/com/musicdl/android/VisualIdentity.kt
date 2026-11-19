@@ -488,8 +488,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
         Text("Музыка в вашем ритме", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
 
         SettingsGroup("VPN для музыки") {
-            Text("Добавьте личную VPN-подписку или отдельную ссылку на сервер. Конфигурации хранятся на устройстве в зашифрованном виде.",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
                 value = vpnInput,
                 onValueChange = { vpnInput = it.take(2 * 1024 * 1024) },
@@ -499,8 +497,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 maxLines = 4,
                 enabled = !vpnBusy && vpnState != MusicVpnService.STATE_CONNECTED,
             )
-            Text("Подписка запрашивается как клиент:", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 SubscriptionClient.entries.forEach { client ->
                     FilterChip(
@@ -510,8 +506,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                     )
                 }
             }
-            Text("«Авто» пробует Happ, v2rayNG и INCY, пока провайдер не отдаст серверы. Если провайдер просит другое приложение, выберите клиент вручную.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(
                 onClick = {
                     vpnBusy = true
@@ -617,16 +611,12 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             }
             VpnSwitchRow(
                 title = "Автопереключение серверов",
-                caption = "Если соединение оборвётся, VPN сам выберет ближайший рабочий сервер из ваших подписок.",
+                caption = "",
                 checked = vpnAutoSwitch,
             ) { vpnAutoSwitch = it; vpnPrefs.edit().putBoolean(MusicVpnService.KEY_AUTO_SWITCH, it).apply() }
             VpnSwitchRow(
                 title = "Обновлять подписки каждый час",
-                caption = run {
-                    val last = vpnPrefs.getLong(MusicVpnService.KEY_LAST_REFRESH, 0L)
-                    if (last > 0) "Последнее обновление: " + java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(last))
-                    else "Серверы из подписок обновятся автоматически, когда есть интернет."
-                },
+                caption = "",
                 checked = vpnAutoUpdate,
             ) {
                 vpnAutoUpdate = it
@@ -662,8 +652,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             }
             if (vpnStatus.isNotBlank()) Text(vpnStatus, style = MaterialTheme.typography.bodySmall,
                 color = if (vpnState == MusicVpnService.STATE_ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Через VPN направляется только трафик XXW Music. Остальные приложения телефона используют обычное подключение. Для подключения сейчас реализованы VLESS, VMess, Trojan и Shadowsocks.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         SettingsGroup("Музыкальные сервисы") {
@@ -998,7 +986,7 @@ internal fun VpnSwitchRow(title: String, caption: String, checked: Boolean, onCh
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (caption.isNotBlank()) Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
     }

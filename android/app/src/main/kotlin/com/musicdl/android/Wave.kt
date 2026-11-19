@@ -282,11 +282,21 @@ object Wave {
         "pop" to listOf("indie", "rnb"), "classical" to listOf("soundtrack", "jazz"),
         "soundtrack" to listOf("classical", "electronic"),
     )
+    // Compiled once: building these per call made ranking take tens of seconds.
+    private val NON_ALNUM by lazy { Regex("[^\\p{L}\\p{N}]+") }
+    private val CREDIT_SPLIT by lazy { Regex("(?i)\\s*(?:,|;|/|&|\\bfeat\\.?|\\bft\\.?|\\bfeaturing\\b|\\s+x\\s+)\\s*") }
+    private val genreKeywords: Map<String, List<String>> by lazy {
+        Genres.all.associate { genre -> genre.id to genre.keywords.map { " " + normalize(it) + " " } }
+    }
+    private val cultureWords: Map<String, List<String>> by lazy {
+        CULTURES.mapValues { (_, words) -> words.map { " " + normalize(it) + " " } }
+    }
+
     private fun normalize(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFKC)
-        .lowercase(Locale.ROOT).replace('ё', 'е').replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        .lowercase(Locale.ROOT).replace('ё', 'е').replace(NON_ALNUM, " ").trim()
 
     fun artistNames(credit: String?): List<String> = credit.orEmpty()
-        .split(Regex("(?i)\\s*(?:,|;|/|&|\\bfeat\\.?|\\bft\\.?|\\bfeaturing\\b|\\s+x\\s+)\\s*"))
+        .split(CREDIT_SPLIT)
         .map(String::trim).filter { it.isNotBlank() && !it.equals("NULL", true) }.distinctBy(::normalize)
 
     fun recordingKey(song: SongInfo): String = normalize(song.singers.orEmpty()) + ":" + normalize(song.songName.orEmpty())
@@ -294,9 +304,7 @@ object Wave {
     /** Titles and performer names are not genre evidence. Match whole words, never `alt` in `salt`. */
     fun inferGenres(song: SongInfo): List<Genre> {
         val metadata = " " + normalize(listOfNotNull(song.genre, song.tags).joinToString(" ")) + " "
-        return Genres.all.filter { genre -> genre.keywords.any { word ->
-            metadata.contains(" " + normalize(word) + " ")
-        } }
+        return Genres.all.filter { genre -> genreKeywords.getValue(genre.id).any { metadata.contains(it) } }
     }
 
     fun inferGenre(song: SongInfo): Genre = inferGenres(song).firstOrNull() ?: Genres.other
@@ -370,9 +378,7 @@ object Wave {
     fun cultureMarkers(song: SongInfo): Set<String> {
         // Catalog genre/tags only: an album called "Indian Summer" is not Indian music.
         val haystack = " " + normalize(listOfNotNull(song.genre, song.tags).joinToString(" ")) + " "
-        return CULTURES.filterValues { words ->
-            words.any { haystack.contains(" " + normalize(it) + " ") }
-        }.keys
+        return cultureWords.filterValues { words -> words.any { haystack.contains(it) } }.keys
     }
 
     /**
@@ -506,22 +512,33 @@ object Wave {
             }.sortedByDescending { it.second }.toMutableList()
         val selected = mutableListOf<SongInfo>()
         val artistCounts = mutableMapOf<String, Int>()
+        // Per-candidate facts are computed once; the selection loop below is then pure lookups.
+        val genreOf = java.util.IdentityHashMap<SongInfo, String>()
+        val creditsOf = java.util.IdentityHashMap<SongInfo, List<String>>()
+        candidates.forEach { (song, _) ->
+            genreOf[song] = inferGenre(song).id
+            creditsOf[song] = artistNames(song.singers).map(::normalize)
+        }
+        val recentGenres = ArrayDeque<String>()
+        val recentArtists = ArrayDeque<List<String>>()
         while (candidates.isNotEmpty() && selected.size < 150) {
-            val recentArtists = selected.takeLast(3).flatMap { artistNames(it.singers) }.map(::normalize).toSet()
+            val blocked = recentArtists.flatten().toSet()
             var eligible = candidates.filter { (song, _) ->
-                artistNames(song.singers).none { (artistCounts[normalize(it)] ?: 0) >= 3 || normalize(it) in recentArtists }
+                creditsOf.getValue(song).none { (artistCounts[it] ?: 0) >= 3 || it in blocked }
             }
             // Variety rules must not shrink the wave: when they exclude everything, loosen them.
             if (eligible.isEmpty()) eligible = candidates.filter { (song, _) ->
-                artistNames(song.singers).none { (artistCounts[normalize(it)] ?: 0) >= 5 }
+                creditsOf.getValue(song).none { (artistCounts[it] ?: 0) >= 5 }
             }
             val next = eligible.maxByOrNull { (song, score) ->
-                val sameGenre = selected.takeLast(3).count { inferGenre(it) == inferGenre(song) }
-                score - sameGenre * 0.2f
+                score - recentGenres.count { it == genreOf.getValue(song) } * 0.2f
             } ?: break
             candidates.remove(next)
             selected += next.first
-            artistNames(next.first.singers).forEach { name -> artistCounts[normalize(name)] = (artistCounts[normalize(name)] ?: 0) + 1 }
+            val credits = creditsOf.getValue(next.first)
+            credits.forEach { name -> artistCounts[name] = (artistCounts[name] ?: 0) + 1 }
+            recentArtists.addLast(credits); if (recentArtists.size > 3) recentArtists.removeFirst()
+            recentGenres.addLast(genreOf.getValue(next.first)); if (recentGenres.size > 3) recentGenres.removeFirst()
         }
         return selected
     }

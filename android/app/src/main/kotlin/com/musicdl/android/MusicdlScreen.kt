@@ -356,23 +356,14 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                     } else if (state.wave.isEmpty()) {
                         item { NoticeCard(state.error ?: "Начните слушать свою волну.") }
                     } else {
-                        item { SectionHeader("Моя волна", state.wave.size) }
-                        items(state.wave, key = { "wave:${it.key()}" }) { song ->
-                            SongCard(
-                                song = song,
-                                save = state.saves[song.key()],
-                                isCurrent = state.player.song?.key() == song.key(),
-                                isPlaying = state.player.song?.key() == song.key() && state.player.isPlaying,
-                                isLiked = song.key() in state.likedKeys,
-                                isFollowed = state.isFollowedBy(song),
-                                onPlay = { viewModel.playOrToggle(song) },
-                                onFollow = { viewModel.toggleFollow(song) },
-                                onAddToPlaylist = { playlistSong = song },
-                                onSave = { viewModel.save(song) },
-                                onLike = { viewModel.toggleLike(song) },
-                                downloaded = downloadedEntry(song),
-                                onActions = { actionsSong = song },
-                                modifier = Modifier.animateItem(),
+                        item {
+                            WaveMiniPlayer(
+                                state = state,
+                                onToggle = viewModel::togglePlayPause,
+                                onNext = viewModel::playNext,
+                                onLike = { viewModel.likeCurrent() },
+                                onDislike = { viewModel.dislikeCurrent() },
+                                onResume = { state.wave.firstOrNull()?.let { viewModel.playOrToggle(it) } },
                             )
                         }
                     }
@@ -690,6 +681,65 @@ internal fun WaveCard(
 
             AnimatedVisibility(visible = showWeights) {
                 GenreWeights(state.coefficients, onWeight)
+            }
+        }
+    }
+}
+
+/** Yandex-style wave player: one current track, no list. */
+@Composable
+private fun WaveMiniPlayer(
+    state: MusicUiState,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onLike: () -> Unit,
+    onDislike: () -> Unit,
+    onResume: () -> Unit,
+) {
+    val waveKeys = remember(state.wave) { state.wave.map { it.key() }.toSet() }
+    val current = state.player.song?.takeIf { it.key() in waveKeys }
+    val song = current ?: state.wave.first()
+    val liked = song.key() in state.likedKeys
+    Column(
+        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
+            .background(Color(0xFF111215)).border(1.dp, Color(0xFF303238), MaterialTheme.shapes.extraLarge)
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        CoverImage(
+            url = if (current != null) state.player.artworkUrl ?: song.coverUrl else song.coverUrl,
+            modifier = Modifier.fillMaxWidth(0.78f).aspectRatio(1f).clip(MaterialTheme.shapes.large),
+        ) {
+            Box(
+                Modifier.fillMaxWidth(0.78f).aspectRatio(1f).clip(MaterialTheme.shapes.large).background(Color(0xFF1B1D22)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.MusicNote, null, Modifier.size(56.dp), tint = Silver.copy(alpha = 0.5f)) }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(song.songName.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, color = Silver)
+            Text(song.singers.orEmpty(), style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, color = Silver.copy(alpha = 0.65f))
+        }
+        Row(
+            Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onDislike, enabled = current != null) {
+                Icon(Icons.Rounded.ThumbDown, "Реже", tint = Silver.copy(alpha = 0.8f))
+            }
+            TransportButton(
+                playing = current != null && state.player.isPlaying,
+                buffering = current != null && state.player.isBuffering,
+                prominent = true,
+                onClick = if (current != null) onToggle else onResume,
+            )
+            IconButton(onClick = onNext, enabled = current != null) {
+                Icon(Icons.Rounded.SkipNext, "Дальше", Modifier.size(30.dp), tint = Silver)
+            }
+            IconButton(onClick = onLike, enabled = current != null) {
+                Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Нравится", tint = Silver)
             }
         }
     }

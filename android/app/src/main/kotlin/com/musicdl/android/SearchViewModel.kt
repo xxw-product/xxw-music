@@ -148,7 +148,7 @@ enum class FeedTab { SEARCH, WAVE, LIKES, ARTISTS, SETTINGS }
 private const val SEARCH_TIMEOUT_MS = 20_000L
 
 /** Whole-wave budget. The pipeline is bounded inside too; this is the last line of defence. */
-private const val WAVE_BUDGET_MS = 45_000L
+private const val WAVE_BUDGET_MS = 60_000L
 
 /** Clip resolution budget, including the last-resort cover motion fallback. */
 private const val CLIP_BUDGET_MS = 20_000L

@@ -57,6 +57,9 @@ class WaveEngine(
 
     suspend fun build(profile: TasteProfile, generation: Int, recent: Set<String>): WaveBuild {
         val notes = mutableListOf<String>()
+        val startedAt = System.currentTimeMillis()
+        // Fallback stages only start while there is time left; the caller's hard budget is larger.
+        fun hasTime() = System.currentTimeMillis() - startedAt < 24_000L
         val client = MusicClient(
             musicSources = sources.toList().ifEmpty { MusicClient.DEFAULT_MUSIC_SOURCES },
             baseConfig = config,
@@ -99,7 +102,7 @@ class WaveEngine(
                 }
             }
 
-            if (unique().size < 10) {
+            if (unique().size < 10 && hasTime()) {
                 report("Волна: запасной подбор")
                 searchStage(client, Wave.baseSeeds.take(3), profile, knownArtists,
                     allowGlobalCatalog = false, notes = notes, sink = ::addAll)
@@ -107,7 +110,7 @@ class WaveEngine(
 
             // The very last network attempt: any source, any non-foreign recording. It runs only if
             // the strict stages found almost nothing, so it cannot pollute a normal wave.
-            if (unique().size < 6) {
+            if (unique().size < 6 && hasTime()) {
                 report("Волна: широкий подбор")
                 searchStage(client, Wave.baseSeeds.take(2), profile, knownArtists,
                     allowGlobalCatalog = true, notes = notes, sink = ::addAll, relaxed = true)
@@ -115,7 +118,7 @@ class WaveEngine(
 
             val candidates = unique()
             if (candidates.isEmpty()) {
-                throw WaveUnavailable("Источники не ответили. Проверьте соединение и повторите.")
+                throw WaveUnavailable("Источники не ответили (${synchronized(notes) { notes.joinToString("; ") }}). Если включён VPN, попробуйте другой сервер.")
             }
 
             report("Волна: уточняем жанры · ${candidates.size}")
@@ -141,7 +144,8 @@ class WaveEngine(
             if (playable.isEmpty()) throw WaveUnavailable("Не удалось подобрать ни одного трека. Попробуйте ещё раз.")
             return WaveBuild(playable, notes)
         } finally {
-            runCatching { client.close() }
+            // Closing may wait on sockets stuck in the network; never let that delay the result.
+            CoroutineScope(Dispatchers.IO).launch { runCatching { client.close() } }
         }
     }
 
@@ -165,7 +169,7 @@ class WaveEngine(
         // blocked in HTTP. Here the budget only controls how long we listen; whatever is still
         // running afterwards is cancelled and forgotten.
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val slots = Semaphore(10)
+        val slots = Semaphore(6)
         var answered = 0
         var kept = 0
         val jobs = seeds.map { seed ->

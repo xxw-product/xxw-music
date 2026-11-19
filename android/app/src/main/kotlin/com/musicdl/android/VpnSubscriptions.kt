@@ -314,6 +314,12 @@ object VpnShareLinkParser {
             "https://… и вставьте её сюда."
 
     /** Why a downloaded/pasted payload produced no servers, in words the user can act on. */
+    /** A short, secret-free look at a response: long tokens (keys, UUIDs, base64) are replaced by "…". */
+    internal fun preview(content: String): String {
+        val text = decodeBase64(content.trim())?.takeIf { it.isNotBlank() } ?: content
+        return text.trim().take(160).replace(Regex("[A-Za-z0-9+/=_.-]{16,}"), "…").replace(Regex("\\s+"), " ").take(90)
+    }
+
     fun explainEmpty(content: String, downloaded: Boolean): String {
         val head = content.trimStart().take(300).lowercase()
         return when {
@@ -321,9 +327,10 @@ object VpnShareLinkParser {
                 "По ссылке открылась веб-страница, а не подписка. Скопируйте именно ссылку подписки из панели."
             head.startsWith("proxies:") || head.contains("\nproxies:") || head.startsWith("port:") || head.startsWith("mixed-port:") ->
                 "Подписка в формате Clash (YAML) не поддерживается. Выберите в панели формат «V2Ray / base64» или список ссылок."
-            head.startsWith("{") ->
+            head.startsWith("{") || head.startsWith("[") ->
                 "Подписка в формате JSON (sing-box/Xray) не поддерживается. Выберите в панели формат «V2Ray / base64» или список ссылок."
-            downloaded -> "Подписка загружена, но в ней нет поддерживаемых серверов (VLESS, VMess, Trojan, Shadowsocks)."
+            downloaded -> "Подписка загружена, но серверов в ней не нашлось (VLESS, VMess, Trojan, Shadowsocks). " +
+                "Начало ответа: «${preview(content)}»"
             else -> "Не найдены поддерживаемые VPN-ссылки (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)"
         }
     }
@@ -338,7 +345,11 @@ object VpnShareLinkParser {
             decodeBase64(trimmed)?.let { decoded -> if (decoded != trimmed) candidates += decoded.lines() }
         }
         val output = LinkedHashMap<String, VpnProfile>()
-        candidates.flatMap { line -> line.split(Regex("\\s+")) }.forEach { raw ->
+        candidates.flatMap { line ->
+            val text = line.trim()
+            // One link per line (its name may contain spaces); split only if several are glued together.
+            if (Regex("://").findAll(text).count() > 1) text.split(Regex("\\s+")) else listOf(text)
+        }.forEach { raw ->
             val link = raw.trim().trim('"', '\'', ',', ';')
             if (link.startsWith("vmess://", true)) {
                 parseVmess(link, subscriptionUrl)?.let { output.putIfAbsent(it.shareUri, it) }
@@ -361,11 +372,16 @@ object VpnShareLinkParser {
     private fun parseUri(link: String, source: String?): VpnProfile? = runCatching {
         val scheme = link.substringBefore("://", "").lowercase()
         if (scheme !in supported) return null
-        val uri = URI(link)
-        val host = uri.host?.takeIf { it.isNotBlank() } ?: return null
-        val port = uri.port.takeIf { it in 1..65535 } ?: defaultPort(scheme)
+        // Panels often leave spaces, quotes or "|" unescaped in the name/query; java.net.URI rejects those.
+        val clean = escapeIllegal(link)
+        val uri = URI(clean)
+        val authority = uri.rawAuthority.orEmpty().substringAfterLast('@')
+        // uri.host is null for names java.net.URI dislikes (e.g. underscores), so fall back to the raw authority.
+        val host = (uri.host ?: authority.substringBeforeLast(':', authority).trim('[', ']')).takeIf { it.isNotBlank() } ?: return null
+        val port = (uri.port.takeIf { it > 0 } ?: authority.substringAfterLast(':', "").toIntOrNull())
+            ?.takeIf { it in 1..65535 } ?: defaultPort(scheme)
         if (port !in 1..65535) return null
-        val fragment = uri.rawFragment?.let { URLDecoder.decode(it, "UTF-8") }
+        val fragment = uri.rawFragment?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
         val display = fragment?.takeIf { it.isNotBlank() } ?: host
         val protocol = when (scheme) {
             "ss", "shadowsocks" -> "Shadowsocks"
@@ -375,8 +391,17 @@ object VpnShareLinkParser {
             "socks", "socks5" -> "SOCKS"
             else -> scheme.replaceFirstChar { it.uppercase() }
         }
-        VpnProfile(UUID.randomUUID().toString(), display, protocol, host, port, link, source)
+        VpnProfile(UUID.randomUUID().toString(), display, protocol, host, port, clean, source)
     }.getOrNull()
+
+    /** Percent-encodes characters that are illegal in a URI, keeping existing %XX escapes. */
+    internal fun escapeIllegal(link: String): String = buildString {
+        for (ch in link) {
+            if (ch.code > 127 || ch in " \"<>\\^`{|}") {
+                ch.toString().toByteArray(StandardCharsets.UTF_8).forEach { append("%%%02X".format(it.toInt() and 0xFF)) }
+            } else append(ch)
+        }
+    }
 
     private fun defaultPort(scheme: String): Int = when (scheme) {
         else -> 0

@@ -84,4 +84,20 @@ class VpnSubscriptionParsingTest {
         assertEquals(SubscriptionClient.AUTO, SubscriptionClient.byId(null))
         assertEquals(SubscriptionClient.INCY, SubscriptionClient.byId("incy"))
     }
+
+    @Test fun namesWithSpacesAndRawSymbolsStillParse() {
+        val body = "vless://11111111-2222-3333-4444-555555555555@my_host.example:443?security=tls&path=/a|b#Германия 🇩🇪 Быстрый\n" +
+            "trojan://pass@example.org:8443#Server Two"
+        val profiles = VpnShareLinkParser.parse(body, null)
+        assertEquals(listOf("Германия 🇩🇪 Быстрый", "Server Two"), profiles.map { it.name })
+        assertEquals("my_host.example", profiles[0].server)
+        assertEquals(443, profiles[0].port)
+        assertEquals(8443, profiles[1].port)
+    }
+
+    @Test fun previewHidesSecrets() {
+        val p = VpnShareLinkParser.preview("Use Happ app token=AbCdEf0123456789XyZ0123456789")
+        assertTrue(p.contains("Use Happ app"))
+        assertTrue(!p.contains("AbCdEf0123456789"))
+    }
 }

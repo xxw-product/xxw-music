@@ -443,6 +443,59 @@ object Wave {
         return genre.keywords.any { haystack.contains(" " + normalize(it) + " ") }
     }
 
+    /** Public normalization, so other components compare artists the same way the model does. */
+    fun key(text: String): String = normalize(text)
+
+    /**
+     * Artists the listener really likes, strongest first, rotated between batches. Artists the
+     * listener keeps skipping or disliked are excluded: similar-artist search must never start
+     * from them.
+     */
+    fun favoriteArtists(profile: TasteProfile, generation: Int, count: Int): List<String> {
+        val pool = profile.artists.entries
+            .filter { it.value > 0 && (profile.penalties.artists[normalize(it.key)] ?: 0f) < 2f }
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(24).map { it.key }
+        if (pool.isEmpty()) return emptyList()
+        val start = Math.floorMod(generation.toLong() * count, pool.size.toLong()).toInt()
+        return (0 until minOf(count, pool.size)).map { pool[(start + it) % pool.size] }
+    }
+
+    /**
+     * Turns "related artists of my favourites" into scored discovery candidates: an artist that is
+     * related to several favourites, or high in a strong favourite's list, scores more. Artists the
+     * listener already knows or has rejected are left out. Keys are normalized names.
+     */
+    fun discovery(related: Map<String, List<String>>, profile: TasteProfile): Map<String, Float> {
+        val known = profile.artists.keys.map(::normalize).toSet()
+        val scores = LinkedHashMap<String, Float>()
+        val display = HashMap<String, String>()
+        related.forEach { (source, names) ->
+            val weight = 1f + ln(1f + (profile.artists[source] ?: profile.artists.entries
+                .firstOrNull { normalize(it.key) == normalize(source) }?.value ?: 0).toFloat())
+            names.forEachIndexed { index, name ->
+                val key = normalize(name)
+                if (key.length < 2 || key in known) return@forEachIndexed
+                if ((profile.penalties.artists[key] ?: 0f) >= 1.5f) return@forEachIndexed
+                scores[key] = (scores[key] ?: 0f) + weight / (1f + index * 0.12f)
+                display.putIfAbsent(key, name)
+            }
+        }
+        return scores.entries.sortedByDescending { it.value }.associate { it.key to it.value }
+    }
+
+    /** Names for discovery seeds; the pool is rotated so successive batches explore further. */
+    fun discoverySeeds(related: Map<String, List<String>>, scores: Map<String, Float>, generation: Int, count: Int): List<WaveSeed> {
+        if (scores.isEmpty()) return emptyList()
+        val names = related.values.flatten().associateBy { normalize(it) }
+        val pool = scores.keys.take(30)
+        val start = Math.floorMod(generation.toLong() * count, pool.size.toLong()).toInt()
+        return (0 until minOf(count, pool.size)).mapNotNull { offset ->
+            val key = pool[(start + offset) % pool.size]
+            names[key]?.let { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }
+        }
+    }
+
     /** Typed seeds: the engine knows whether a query is an artist, a style or a last resort. */
     fun artistSeeds(profile: TasteProfile, generation: Int = 0): List<WaveSeed> =
         artistQueries(profile.artists, generation).map { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }
@@ -491,7 +544,7 @@ object Wave {
 
     fun rank(results: List<SongInfo>, coefficients: Map<String, Float>, artists: Map<String, Int>,
              history: List<ListeningSignal> = emptyList(), recent: Set<String> = emptySet(),
-             penalties: Penalties = Penalties()): List<SongInfo> {
+             penalties: Penalties = Penalties(), discovery: Map<String, Float> = emptyMap()): List<SongInfo> {
         val artistTaste = artists.entries.associate { normalize(it.key) to it.value }
         val listening = history.associateBy { recordingKey(it.song) }
         val candidates = results.filter { !it.songName.isNullOrBlank() && !it.singers.isNullOrBlank() }
@@ -502,12 +555,15 @@ object Wave {
                 val weights = genres.map { coefficients[it.id] ?: Genres.DEFAULT_WEIGHT }
                 if (weights.isNotEmpty() && weights.all { it <= 0f }) return@mapNotNull null
                 val rejection = penaltyFor(song, penalties)
+                // An artist the listener rejected more than once is not offered again, whatever else matches.
+                if (artistNames(song.singers).any { (penalties.artists[normalize(it)] ?: 0f) >= 3f }) return@mapNotNull null
+                val discoveryBoost = artistNames(song.singers).maxOfOrNull { (discovery[normalize(it)] ?: 0f) } ?: 0f
                 // A track the user explicitly disliked, or skipped again and again, does not come back.
                 if ((penalties.tracks[recordingKey(song)] ?: 0f) >= 4f) return@mapNotNull null
                 val affinity = weights.average().takeUnless { it.isNaN() }?.toFloat() ?: 0.25f
                 val familiar = artistNames(song.singers).maxOfOrNull { artistTaste[normalize(it)] ?: 0 } ?: 0
                 val novelty = if (signal == null) 0.35f else -ln(1f + signal.plays) * 0.3f - signal.skips * 0.4f
-                song to (affinity * 2f + ln(1f + familiar) * 0.16f + novelty -
+                song to (affinity * 2f + ln(1f + familiar) * 0.16f + novelty + minOf(1.4f, discoveryBoost * 0.3f) -
                     (if (recordingKey(song) in recent) 1.25f else 0f) - rejection)
             }.sortedByDescending { it.second }.toMutableList()
         val selected = mutableListOf<SongInfo>()

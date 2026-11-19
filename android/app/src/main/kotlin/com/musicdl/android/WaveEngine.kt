@@ -47,6 +47,7 @@ class WaveEngine(
     private val accept: (SongInfo) -> Boolean,
     private val enrich: suspend (SongInfo) -> SongInfo,
     private val report: (String) -> Unit,
+    private val similar: SimilarArtists? = null,
 ) {
     private val queryTimeoutMs = 7_000L
     private val sourceTimeoutMs = 5_000L
@@ -96,10 +97,29 @@ class WaveEngine(
             // timeouts together, and the genre stage only ran when artists gave almost nothing.
             // Fast mode serves the first handful of tracks (and every top-up): few seeds, no
             // enrichment, and the search stops listening as soon as there are enough candidates.
-            val artistSeeds = Wave.artistSeeds(profile, generation).let { if (fast) it.take(6) else it }
-            val genreSeeds = Wave.genreSeeds(profile, generation).take(if (fast) 4 else 10)
+            // Taste = favourites (exact artists) + discovery (artists related to the favourites).
+            val favorites = Wave.favoriteArtists(profile, generation, if (fast) 3 else 6)
+            val related = relatedArtists(Wave.favoriteArtists(profile, generation + 1, 5))
+            val discovery = Wave.discovery(related, profile)
+            val discoverySeeds = Wave.discoverySeeds(related, discovery, generation, if (fast) 5 else 10)
+            val favoriteSeeds = favorites.map { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }
+            // Interleaved so an early exit still has both kinds in hand.
+            val artistSeeds = buildList {
+                for (i in 0 until maxOf(favoriteSeeds.size, discoverySeeds.size)) {
+                    favoriteSeeds.getOrNull(i)?.let(::add)
+                    discoverySeeds.getOrNull(i)?.let(::add)
+                }
+            }
+            if (discoverySeeds.isNotEmpty()) notes += "Похожих исполнителей: ${discoverySeeds.size}"
+            val genreSeeds = Wave.genreSeeds(profile, generation).take(if (fast) 2 else 8)
             val budget = if (fast) 7_000L else stageBudgetMs
-            val enough: () -> Boolean = { fast && unique().size >= limit * 3 }
+            val discoveryKeys = discovery.keys
+            val enough: () -> Boolean = {
+                fast && unique().size >= limit * 3 && (
+                    discoverySeeds.isEmpty() || System.currentTimeMillis() - startedAt > 4_500L ||
+                        unique().count { song -> Wave.artistNames(song.singers).any { Wave.key(it) in discoveryKeys } } >= limit
+                    )
+            }
             report("Волна: ищем исполнителей и жанры")
             coroutineScope {
                 if (artistSeeds.isNotEmpty()) launch {
@@ -144,6 +164,7 @@ class WaveEngine(
                 history = profile.history,
                 recent = recent,
                 penalties = profile.penalties,
+                discovery = discovery,
             )
             // Random fallback: if ranking rejected everything, a playable assortment still beats an
             // empty wave. Order is shuffled so consecutive tries differ.
@@ -246,6 +267,24 @@ class WaveEngine(
         WaveSeedKind.ARTIST -> "Волна: исполнители"
         WaveSeedKind.GENRE -> "Волна: жанры"
         WaveSeedKind.BASE -> "Волна: основа"
+    }
+
+    /** Related artists for a few favourites, looked up in parallel within a short budget. */
+    private suspend fun relatedArtists(sources: List<String>): Map<String, List<String>> {
+        val lookup = similar ?: return emptyMap()
+        if (sources.isEmpty()) return emptyMap()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val jobs = sources.associateWith { name -> scope.async { lookup.related(name) } }
+        withTimeoutOrNull(3_500L) {
+            while (jobs.values.any { it.isActive }) delay(50)
+        }
+        val answered = jobs.mapNotNull { (name, job) ->
+            if (job.isCompleted && !job.isCancelled) runCatching { job.getCompleted() }.getOrNull()
+                ?.takeIf { it.isNotEmpty() }?.let { name to it } else null
+        }.toMap()
+        jobs.values.forEach { it.cancel() }
+        scope.cancel()
+        return answered
     }
 
     private suspend fun enrichCandidates(candidates: List<SongInfo>): List<SongInfo> {

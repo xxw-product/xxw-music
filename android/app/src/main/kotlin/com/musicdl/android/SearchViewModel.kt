@@ -167,6 +167,7 @@ fun SongInfo.key(): String = "${source}:${identifier ?: songName}"
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
 
     private val waveStore = WaveStore(application)
+    private val similarArtists = SimilarArtists(application)
     private val library = LibraryStore(application)
     private val downloads = DownloadStore(application)
     private var waveJob: Job? = null
@@ -667,28 +668,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 // Treat the actual music library as taste evidence too. Previously downloaded
                 // tracks were only used by the offline fallback, so a user with a full local
                 // library but few likes had no artist profile and got generic/empty catalog hits.
-                val (saved, libraryTracks, likesSnapshot) = withContext(Dispatchers.IO) {
-                    val savedTracks = library.playlists().flatMap { it.tracks }
-                    Triple(savedTracks, library.downloaded(), library.likes())
-                }
-                // A large local library is legitimate taste data, but building the taste model
-                // is CPU work. With ~2000 downloaded tracks the old code performed distinctBy(),
-                // genre inference, artist normalization and profile scoring on the UI thread;
-                // that could block Android's main looper long enough to produce an ANR exactly
-                // after the progress bar reached the "уточняем вкус" stage.
-                val (seeds, profile) = withContext(Dispatchers.Default) {
-                    val tasteTracks = (likesSnapshot + saved + libraryTracks).distinctBy { it.key() }
-                    val listening = waveStore.listening()
-                    val seeds = (tasteTracks + listening.map { it.song }).distinctBy { it.key() }
-                    val profile = Wave.profile(
-                        _state.value.coefficients,
-                        likesSnapshot,
-                        listening,
-                        library.followedArtists(),
-                        saved = (saved + libraryTracks).distinctBy { it.key() },
-                    )
-                    seeds to profile
-                }
+                val (seeds, profile) = computeTaste()
                 _state.update { it.copy(progressText = "Волна: уточняем вкус") }
                 // Metadata refresh of the first library tracks used to block the start by up to 8 s;
                 // it now runs in the background and never delays the first songs.
@@ -712,6 +692,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         accept = { isPlayable(it, allowsPreviews(sources)) },
                         enrich = { enrichMetadataNow(it) },
                         report = { text -> if (!quiet) _state.update { it.copy(progressText = text) } },
+                        similar = similarArtists,
                     )
                 }
                 val engine = newEngine(false)
@@ -784,6 +765,32 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             .distinctBy { it.key() }.take(150)
 
     /**
+     * Taste model from the library, likes, listening history (skips and dislikes included) and
+     * followed artists. CPU work stays off the main thread, so even a library of thousands of
+     * tracks cannot freeze the UI; it is recomputed for every top-up so a like or dislike given
+     * a minute ago already shapes the next songs.
+     */
+    private suspend fun computeTaste(): Pair<List<SongInfo>, TasteProfile> {
+        val (saved, libraryTracks, likesSnapshot) = withContext(Dispatchers.IO) {
+            val savedTracks = library.playlists().flatMap { it.tracks }
+            Triple(savedTracks, library.downloaded(), library.likes())
+        }
+        return withContext(Dispatchers.Default) {
+            val tasteTracks = (likesSnapshot + saved + libraryTracks).distinctBy { it.key() }
+            val listening = waveStore.listening()
+            val seeds = (tasteTracks + listening.map { it.song }).distinctBy { it.key() }
+            val profile = Wave.profile(
+                _state.value.coefficients,
+                likesSnapshot,
+                listening,
+                library.followedArtists(),
+                saved = (saved + libraryTracks).distinctBy { it.key() },
+            )
+            seeds to profile
+        }
+    }
+
+    /**
      * Endless wave: while the listener is on a wave track and fewer than six tracks remain in the
      * queue, another small batch (up to ten) is fetched and appended. Library size does not matter:
      * the profile is built once, and each batch only runs a few seeds that rotate through the
@@ -800,11 +807,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (playbackQueue.size - playbackQueue.index - 1 >= 6) { delay(2_000L); continue }
                 // Never repeat anything already queued or played in this session, however long it runs.
                 val seen = waveKeys + playbackQueue.items.map(Wave::recordingKey) + playbackQueue.historyItems.map(Wave::recordingKey)
+                val freshProfile = runCatching { computeTaste().second }.getOrDefault(profile)
                 val build = runCatching {
                     withTimeoutOrNull(30_000L) {
                         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                         try {
-                            scope.async { engine().build(profile, waveStore.generation, seen, fast = true, limit = 10) }.await()
+                            scope.async { engine().build(freshProfile, waveStore.generation, seen, fast = true, limit = 10) }.await()
                         } finally { scope.cancel() }
                     }
                 }.getOrNull()
@@ -1786,7 +1794,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun likeCurrent() = _state.value.player.song?.let(::toggleLike)
 
-    fun dislikeCurrent() = _state.value.player.song?.let(::dislike)
+    /** Disliking the playing track also moves on, so the listener never has to hear it out. */
+    fun dislikeCurrent() {
+        val song = _state.value.player.song ?: return
+        dislike(song)
+        advanceQueue()
+    }
 
     fun setGenreWeight(genreId: String, value: Float) {
         waveStore.putCoefficient(genreId, value)

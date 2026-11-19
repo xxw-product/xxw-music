@@ -713,14 +713,14 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 // Hard stop: the build runs in its own scope, so the UI budget is measured in wall
                 // clock and does not wait for a provider stuck in a blocking socket. Loading can
                 // therefore never outlive WAVE_BUDGET_MS, whatever the network does.
-                val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                 val buildJob = buildScope.async { engine.build(profile, waveStore.generation, recent, fast = true, limit = 6) }
                 val build = try {
                     withTimeoutOrNull(FIRST_BATCH_BUDGET_MS) { buildJob.await() }
                 } finally {
                     buildJob.cancel()
                     buildScope.cancel()
-                } ?: throw WaveUnavailable("Подбор не уложился в отведённое время. Проверьте соединение и попробуйте ещё раз.")
+                } ?: throw WaveUnavailable("Подбор не уложился в отведённое время (${_state.value.progressText}). Проверьте соединение и попробуйте ещё раз.")
                 if (epoch != waveEpoch) return@launch
                 val tracks = build.tracks
                 if (tracks.isEmpty()) throw WaveUnavailable("Источники не дали треков. Попробуйте ещё раз.")
@@ -794,7 +794,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (playbackQueue.size - playbackQueue.index - 1 >= 6) { delay(3_000L); continue }
                 val build = runCatching {
                     withTimeoutOrNull(30_000L) {
-                        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                         try {
                             scope.async { engine().build(profile, waveStore.generation, waveKeys, fast = true, limit = 10) }.await()
                         } finally { scope.cancel() }

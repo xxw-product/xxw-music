@@ -180,8 +180,8 @@ class WaveEngine(
         if (seeds.isEmpty()) return
         // Detached on purpose: a timeout around `coroutineScope` still waits for children that are
         // blocked in HTTP. Here the budget only controls how long we listen; whatever is still
-        // running afterwards is cancelled and forgotten.
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // running afterwards is cancelled and forgotten. Default, not IO: these jobs only await.
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val slots = Semaphore(6)
         var answered = 0
         var kept = 0

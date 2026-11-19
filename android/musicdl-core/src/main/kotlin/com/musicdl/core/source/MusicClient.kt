@@ -8,10 +8,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.util.concurrent.Executors
 
 /** Port of `MusicClientBuilder.REGISTERED_MODULES` plus `BuildMusicClient`. */
 object MusicClientRegistry {
@@ -67,11 +69,13 @@ class MusicClient(
         artistOnly: Boolean = false,
         /** Called once per source, as soon as it answers or times out, so the UI can stream in. */
         onSourceResult: ((String, List<SongInfo>) -> Unit)? = null,
-    ): Map<String, List<SongInfo>> = withContext(Dispatchers.IO) {
+    ): Map<String, List<SongInfo>> = withContext(Dispatchers.Default) {
         // Sources talk to the network through blocking OkHttp calls, so a hung server cannot be
         // interrupted by cancellation alone. Each source therefore runs in its own supervisor scope
         // and the fan-out only waits [sourceTimeoutMs] for it; whatever is late is abandoned.
-        val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // Own elastic pool: abandoned blocking calls must never starve Dispatchers.IO (64 threads),
+        // otherwise timeouts and other work stop firing on time.
+        val work = CoroutineScope(SupervisorJob() + BLOCKING)
         val tasks = musicSources.associateWith { source ->
             work.async {
                 val client = clients[source] ?: return@async emptyList()
@@ -124,6 +128,10 @@ class MusicClient(
     companion object {
         /** Upper bound for a single source inside [search]; slow sites are simply skipped. */
         const val DEFAULT_SOURCE_TIMEOUT_MS = 30_000L
+
+        private val BLOCKING = Executors.newCachedThreadPool { r ->
+            Thread(r, "musicdl-search").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
 
         /** Port of `DEFAULT_MUSIC_SOURCES`. */
         val DEFAULT_MUSIC_SOURCES = MusicClientRegistry.registeredModules.toList()

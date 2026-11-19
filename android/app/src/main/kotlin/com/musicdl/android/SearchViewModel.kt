@@ -150,6 +150,7 @@ private const val SEARCH_TIMEOUT_MS = 20_000L
 /** Whole-wave budget. The pipeline is bounded inside too; this is the last line of defence. */
 private const val WAVE_BUDGET_MS = 60_000L
 private const val FIRST_BATCH_BUDGET_MS = 25_000L
+private val WAVE_EXCLUDED_SOURCES = setOf("QobuzMusicClient")
 
 /** Clip resolution budget, including the last-resort cover motion fallback. */
 private const val CLIP_BUDGET_MS = 20_000L
@@ -700,7 +701,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 // The wave always has the anonymous catalogs as a floor, even if the user narrowed
                 // the search to a token-gated source that is not configured.
-                val sources = (supportedSources(_state.value.activeSources) + RECOMMENDED_SOURCES).toSet()
+                // Only the catalogs switched on in Settings; Qobuz hands out links that do not play,
+                // so the wave leaves it out. If nothing else is selected, the anonymous defaults apply.
+                val sources = (supportedSources(_state.value.activeSources) - WAVE_EXCLUDED_SOURCES)
+                    .ifEmpty { RECOMMENDED_SOURCES - WAVE_EXCLUDED_SOURCES }
                 val newEngine = { quiet: Boolean ->
                     WaveEngine(
                         config = clientConfig(),

@@ -149,6 +149,7 @@ private const val SEARCH_TIMEOUT_MS = 20_000L
 
 /** Whole-wave budget. The pipeline is bounded inside too; this is the last line of defence. */
 private const val WAVE_BUDGET_MS = 60_000L
+private const val FIRST_BATCH_BUDGET_MS = 25_000L
 
 /** Clip resolution budget, including the last-resort cover motion fallback. */
 private const val CLIP_BUDGET_MS = 20_000L
@@ -169,6 +170,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val downloads = DownloadStore(application)
     private var waveJob: Job? = null
     private var waveEpoch = 0
+    private var topUpJob: Job? = null
     private var clipJob: Job? = null
     private val metadataClient = TrackGenreClient()
     private val metadataSlots = Semaphore(3)
@@ -685,9 +687,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     seeds to profile
                 }
                 _state.update { it.copy(progressText = "Волна: уточняем вкус") }
-                withContext(Dispatchers.IO) {
+                // Metadata refresh of the first library tracks used to block the start by up to 8 s;
+                // it now runs in the background and never delays the first songs.
+                viewModelScope.launch(Dispatchers.IO) {
                     withTimeoutOrNull(8_000L) {
-                        // A failed metadata lookup must never abort the whole wave.
                         coroutineScope {
                             seeds.take(12).map { song -> async { runCatching { enrichMetadataNow(song) } } }.awaitAll()
                         }
@@ -696,21 +699,24 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 // The wave always has the anonymous catalogs as a floor, even if the user narrowed
                 // the search to a token-gated source that is not configured.
                 val sources = (supportedSources(_state.value.activeSources) + RECOMMENDED_SOURCES).toSet()
-                val engine = WaveEngine(
-                    config = clientConfig(),
-                    sources = sources,
-                    accept = { isPlayable(it, allowsPreviews(sources)) },
-                    enrich = { enrichMetadataNow(it) },
-                    report = { text -> _state.update { it.copy(progressText = text) } },
-                )
+                val newEngine = { quiet: Boolean ->
+                    WaveEngine(
+                        config = clientConfig(),
+                        sources = sources,
+                        accept = { isPlayable(it, allowsPreviews(sources)) },
+                        enrich = { enrichMetadataNow(it) },
+                        report = { text -> if (!quiet) _state.update { it.copy(progressText = text) } },
+                    )
+                }
+                val engine = newEngine(false)
                 val recent = _state.value.wave.map(Wave::recordingKey).toSet()
                 // Hard stop: the build runs in its own scope, so the UI budget is measured in wall
                 // clock and does not wait for a provider stuck in a blocking socket. Loading can
                 // therefore never outlive WAVE_BUDGET_MS, whatever the network does.
                 val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-                val buildJob = buildScope.async { engine.build(profile, waveStore.generation, recent) }
+                val buildJob = buildScope.async { engine.build(profile, waveStore.generation, recent, fast = true, limit = 6) }
                 val build = try {
-                    withTimeoutOrNull(WAVE_BUDGET_MS) { buildJob.await() }
+                    withTimeoutOrNull(FIRST_BATCH_BUDGET_MS) { buildJob.await() }
                 } finally {
                     buildJob.cancel()
                     buildScope.cancel()
@@ -734,8 +740,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         progressText = "Волна готова: ${tracks.size}",
                     )
                 }
-                _messages.tryEmit("Волна готова: ${tracks.size} треков")
                 startQueue(tracks, 0)
+                launchWaveTopUp(epoch, profile) { newEngine(true) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -770,6 +776,48 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private fun fallbackWave(): List<SongInfo> =
         _state.value.wave.filter { it.source in ALL_SOURCES && library.localFileFor(it) == null }
             .distinctBy { it.key() }.take(150)
+
+    /**
+     * Endless wave: while the listener is on a wave track and fewer than six tracks remain in the
+     * queue, another small batch (up to ten) is fetched and appended. Library size does not matter:
+     * the profile is built once, and each batch only runs a few seeds that rotate through the
+     * artists. Failures back off but never stop the wave.
+     */
+    private fun launchWaveTopUp(epoch: Int, profile: TasteProfile, engine: () -> WaveEngine) {
+        topUpJob?.cancel()
+        topUpJob = viewModelScope.launch {
+            var failures = 0
+            while (epoch == waveEpoch) {
+                val waveKeys = _state.value.wave.map(Wave::recordingKey).toSet()
+                val current = _state.value.player.song
+                if (current != null && Wave.recordingKey(current) !in waveKeys) return@launch
+                if (playbackQueue.size - playbackQueue.index - 1 >= 6) { delay(3_000L); continue }
+                val build = runCatching {
+                    withTimeoutOrNull(30_000L) {
+                        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                        try {
+                            scope.async { engine().build(profile, waveStore.generation, waveKeys, fast = true, limit = 10) }.await()
+                        } finally { scope.cancel() }
+                    }
+                }.getOrNull()
+                if (epoch != waveEpoch) return@launch
+                val fresh = build?.tracks.orEmpty().filter { Wave.recordingKey(it) !in waveKeys }.take(10)
+                waveStore.generation = waveStore.generation + 1
+                if (fresh.isEmpty()) {
+                    failures++
+                    delay(minOf(30_000L, 2_000L * (1L shl minOf(failures, 4))))
+                    continue
+                }
+                failures = 0
+                playbackQueue.append(fresh)
+                publishQueue()
+                persistPlayback()
+                val updated = (_state.value.wave + fresh).takeLast(400)
+                _state.update { it.copy(wave = updated) }
+                withContext(Dispatchers.IO) { library.saveWave(updated.takeLast(150)) }
+            }
+        }
+    }
 
     private fun startQueue(songs: List<SongInfo>, index: Int) {
         if (songs.isEmpty()) return
@@ -854,6 +902,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun resetWave() {
         tasteEpoch++
         waveEpoch++
+        topUpJob?.cancel()
         waveJob?.cancel()
         waveStore.reset()
         library.saveWave(emptyList())

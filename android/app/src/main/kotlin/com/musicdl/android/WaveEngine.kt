@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -55,7 +56,13 @@ class WaveEngine(
     // No hard ten-track wall: the wave grows until the catalogs stop answering or the budget ends.
     private val targetSize = 150
 
-    suspend fun build(profile: TasteProfile, generation: Int, recent: Set<String>): WaveBuild {
+    suspend fun build(
+        profile: TasteProfile,
+        generation: Int,
+        recent: Set<String>,
+        fast: Boolean = false,
+        limit: Int = targetSize,
+    ): WaveBuild {
         val notes = mutableListOf<String>()
         val startedAt = System.currentTimeMillis()
         // Fallback stages only start while there is time left; the caller's hard budget is larger.
@@ -87,18 +94,22 @@ class WaveEngine(
 
             // Artist and genre stages run side by side: sequential stages used to add their
             // timeouts together, and the genre stage only ran when artists gave almost nothing.
-            val artistSeeds = Wave.artistSeeds(profile, generation)
-            val genreSeeds = Wave.genreSeeds(profile, generation).take(10)
+            // Fast mode serves the first handful of tracks (and every top-up): few seeds, no
+            // enrichment, and the search stops listening as soon as there are enough candidates.
+            val artistSeeds = Wave.artistSeeds(profile, generation).let { if (fast) it.take(6) else it }
+            val genreSeeds = Wave.genreSeeds(profile, generation).take(if (fast) 4 else 10)
+            val budget = if (fast) 7_000L else stageBudgetMs
+            val enough: () -> Boolean = { fast && unique().size >= limit * 3 }
             report("Волна: ищем исполнителей и жанры")
             coroutineScope {
                 if (artistSeeds.isNotEmpty()) launch {
                     // An exact artist search is the one place the wide catalog is genuinely useful.
                     searchStage(client, artistSeeds, profile, knownArtists,
-                        allowGlobalCatalog = true, notes = notes, sink = ::addAll)
+                        allowGlobalCatalog = true, notes = notes, sink = ::addAll, budget = budget, enough = enough)
                 }
                 if (genreSeeds.isNotEmpty()) launch {
                     searchStage(client, genreSeeds, profile, knownArtists,
-                        allowGlobalCatalog = false, notes = notes, sink = ::addAll)
+                        allowGlobalCatalog = false, notes = notes, sink = ::addAll, budget = budget, enough = enough)
                 }
             }
 
@@ -122,7 +133,7 @@ class WaveEngine(
             }
 
             report("Волна: уточняем жанры · ${candidates.size}")
-            val enriched = enrichCandidates(candidates.take(200))
+            val enriched = (if (fast) candidates else enrichCandidates(candidates.take(200)))
                 // Enrichment may add catalog genres; a record that turned out to be foreign is not
                 // a recommendation, so the filter runs again before ranking.
                 .filterNot { Wave.isForeignCulture(it, profile) }
@@ -137,10 +148,10 @@ class WaveEngine(
             // Random fallback: if ranking rejected everything, a playable assortment still beats an
             // empty wave. Order is shuffled so consecutive tries differ.
             val playable = ranked.ifEmpty {
-                enriched.shuffled().take(targetSize).also {
+                enriched.shuffled().take(limit).also {
                     notes += "Ранжирование пустое — включён случайный подбор"
                 }
-            }.take(targetSize)
+            }.take(limit)
             if (playable.isEmpty()) throw WaveUnavailable("Не удалось подобрать ни одного трека. Попробуйте ещё раз.")
             return WaveBuild(playable, notes)
         } finally {
@@ -163,6 +174,8 @@ class WaveEngine(
         notes: MutableList<String>,
         sink: (SongInfo) -> Unit,
         relaxed: Boolean = false,
+        budget: Long = stageBudgetMs,
+        enough: () -> Boolean = { false },
     ) {
         if (seeds.isEmpty()) return
         // Detached on purpose: a timeout around `coroutineScope` still waits for children that are
@@ -194,7 +207,9 @@ class WaveEngine(
                 }
             }
         }
-        withTimeoutOrNull(stageBudgetMs) { jobs.awaitAll() }
+        withTimeoutOrNull(budget) {
+            while (jobs.any { it.isActive } && !enough()) delay(100)
+        }
         jobs.forEach { it.cancel() }
         scope.cancel()
         synchronized(notes) { notes += "${stageName(seeds.first().kind)}: ${seeds.size} запросов, ответов $answered, подошло $kept" }

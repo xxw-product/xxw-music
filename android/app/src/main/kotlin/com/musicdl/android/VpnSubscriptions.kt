@@ -396,10 +396,14 @@ object VpnShareLinkParser {
 
     /** Percent-encodes characters that are illegal in a URI, keeping existing %XX escapes. */
     internal fun escapeIllegal(link: String): String = buildString {
-        for (ch in link) {
-            if (ch.code > 127 || ch in " \"<>\\^`{|}") {
-                ch.toString().toByteArray(StandardCharsets.UTF_8).forEach { append("%%%02X".format(it.toInt() and 0xFF)) }
-            } else append(ch)
+        var i = 0
+        while (i < link.length) {
+            val cp = link.codePointAt(i)
+            val text = String(Character.toChars(cp))
+            if (cp > 127 || cp.toChar() in " \"<>\\^`{|}") {
+                text.toByteArray(StandardCharsets.UTF_8).forEach { append("%%%02X".format(it.toInt() and 0xFF)) }
+            } else append(text)
+            i += Character.charCount(cp)
         }
     }
 

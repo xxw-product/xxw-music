@@ -10,6 +10,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
@@ -45,11 +47,11 @@ class WaveEngine(
     private val enrich: suspend (SongInfo) -> SongInfo,
     private val report: (String) -> Unit,
 ) {
-    private val queryTimeoutMs = 9_000L
-    private val sourceTimeoutMs = 6_000L
-    private val stageBudgetMs = 18_000L
-    private val enrichBudgetMs = 18_000L
-    private val enrichItemTimeoutMs = 6_000L
+    private val queryTimeoutMs = 7_000L
+    private val sourceTimeoutMs = 5_000L
+    private val stageBudgetMs = 12_000L
+    private val enrichBudgetMs = 8_000L
+    private val enrichItemTimeoutMs = 4_000L
     // No hard ten-track wall: the wave grows until the catalogs stop answering or the budget ends.
     private val targetSize = 150
 
@@ -80,18 +82,18 @@ class WaveEngine(
                     allowGlobalCatalog = false, notes = notes, sink = ::addAll)
             }
 
+            // Artist and genre stages run side by side: sequential stages used to add their
+            // timeouts together, and the genre stage only ran when artists gave almost nothing.
             val artistSeeds = Wave.artistSeeds(profile, generation)
-            if (artistSeeds.isNotEmpty()) {
-                report("Волна: ищем исполнителей")
-                // An exact artist search is the one place the wide catalog is genuinely useful.
-                searchStage(client, artistSeeds, profile, knownArtists,
-                    allowGlobalCatalog = true, notes = notes, sink = ::addAll)
-            }
-
-            if (unique().size < 14) {
-                val genreSeeds = Wave.genreSeeds(profile, generation).take(10)
-                if (genreSeeds.isNotEmpty()) {
-                    report("Волна: расширяем жанры")
+            val genreSeeds = Wave.genreSeeds(profile, generation).take(10)
+            report("Волна: ищем исполнителей и жанры")
+            coroutineScope {
+                if (artistSeeds.isNotEmpty()) launch {
+                    // An exact artist search is the one place the wide catalog is genuinely useful.
+                    searchStage(client, artistSeeds, profile, knownArtists,
+                        allowGlobalCatalog = true, notes = notes, sink = ::addAll)
+                }
+                if (genreSeeds.isNotEmpty()) launch {
                     searchStage(client, genreSeeds, profile, knownArtists,
                         allowGlobalCatalog = false, notes = notes, sink = ::addAll)
                 }
@@ -117,7 +119,7 @@ class WaveEngine(
             }
 
             report("Волна: уточняем жанры · ${candidates.size}")
-            val enriched = enrichCandidates(candidates.take(150))
+            val enriched = enrichCandidates(candidates.take(200))
                 // Enrichment may add catalog genres; a record that turned out to be foreign is not
                 // a recommendation, so the filter runs again before ranking.
                 .filterNot { Wave.isForeignCulture(it, profile) }
@@ -163,7 +165,7 @@ class WaveEngine(
         // blocked in HTTP. Here the budget only controls how long we listen; whatever is still
         // running afterwards is cancelled and forgotten.
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val slots = Semaphore(3)
+        val slots = Semaphore(10)
         var answered = 0
         var kept = 0
         val jobs = seeds.map { seed ->
@@ -191,7 +193,7 @@ class WaveEngine(
         withTimeoutOrNull(stageBudgetMs) { jobs.awaitAll() }
         jobs.forEach { it.cancel() }
         scope.cancel()
-        notes += "${stageName(seeds.first().kind)}: ${seeds.size} запросов, ответов $answered, подошло $kept"
+        synchronized(notes) { notes += "${stageName(seeds.first().kind)}: ${seeds.size} запросов, ответов $answered, подошло $kept" }
         report(stageName(seeds.first().kind))
     }
 
@@ -229,10 +231,15 @@ class WaveEngine(
 
     private suspend fun enrichCandidates(candidates: List<SongInfo>): List<SongInfo> {
         val updated = java.util.Collections.synchronizedMap(LinkedHashMap<String, SongInfo>())
-        val slots = Semaphore(3)
+        val slots = Semaphore(12)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val jobs = candidates.map { song ->
             scope.async {
+                // A track that already carries a genre needs no catalog round trip.
+                if (!song.genre.isNullOrBlank()) {
+                    updated[song.key()] = song
+                    return@async
+                }
                 slots.withPermit {
                     val fresh = try {
                         withTimeoutOrNull(enrichItemTimeoutMs) { enrich(song) }

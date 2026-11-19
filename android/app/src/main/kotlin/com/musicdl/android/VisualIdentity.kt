@@ -872,10 +872,10 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
 
         SettingsGroup("Моя волна") {
             Text("Ваш вкус меняется вместе с вами", style = MaterialTheme.typography.titleMedium)
-            Text("Волна учитывает любимые треки, исполнителей, жанры, полные прослушивания, повторы и прослушивания до конца. " +
-                "Штрафы за ранние и повторные пропуски, короткое прослушивание, дизлайк, удаление из медиатеки переносятся на исполнителя, жанр и похожие треки и затухают со временем (полураспад ~45 дней). " +
-                "Учтено прослушиваний: ${state.listeningCount}.",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (state.listeningCount > 0) "Учтено прослушиваний: ${state.listeningCount}" else "Прослушиваний пока нет",
+                style = MaterialTheme.typography.bodyMedium)
+            Text("Лайки, прослушивания, повторы, пропуски и дизлайки",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(vertical = 8.dp))
             Surface(onClick = { confirm = true }, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {

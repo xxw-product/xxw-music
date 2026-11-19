@@ -462,8 +462,8 @@ object Wave {
         val ordered = artists.entries.sortedWith(
             compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key },
         ).map { it.key }
-        val start = Math.floorMod(generation.toLong() * 6, ordered.size.toLong()).toInt()
-        return (0 until minOf(6, ordered.size)).map { ordered[(start + it) % ordered.size] }
+        val start = Math.floorMod(generation.toLong() * 12, ordered.size.toLong()).toInt()
+        return (0 until minOf(12, ordered.size)).map { ordered[(start + it) % ordered.size] }
     }
 
     /** Genre seeds: strongest preferences first, plus a couple of adjacent styles. */
@@ -508,8 +508,12 @@ object Wave {
         val artistCounts = mutableMapOf<String, Int>()
         while (candidates.isNotEmpty() && selected.size < 150) {
             val recentArtists = selected.takeLast(3).flatMap { artistNames(it.singers) }.map(::normalize).toSet()
-            val eligible = candidates.filter { (song, _) ->
-                artistNames(song.singers).none { (artistCounts[normalize(it)] ?: 0) >= 2 || normalize(it) in recentArtists }
+            var eligible = candidates.filter { (song, _) ->
+                artistNames(song.singers).none { (artistCounts[normalize(it)] ?: 0) >= 3 || normalize(it) in recentArtists }
+            }
+            // Variety rules must not shrink the wave: when they exclude everything, loosen them.
+            if (eligible.isEmpty()) eligible = candidates.filter { (song, _) ->
+                artistNames(song.singers).none { (artistCounts[normalize(it)] ?: 0) >= 5 }
             }
             val next = eligible.maxByOrNull { (song, score) ->
                 val sameGenre = selected.takeLast(3).count { inferGenre(it) == inferGenre(song) }

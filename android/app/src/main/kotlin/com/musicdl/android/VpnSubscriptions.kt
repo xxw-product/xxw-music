@@ -8,6 +8,9 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.URLDecoder
@@ -328,16 +331,58 @@ object VpnShareLinkParser {
             head.startsWith("proxies:") || head.contains("\nproxies:") || head.startsWith("port:") || head.startsWith("mixed-port:") ->
                 "Подписка в формате Clash (YAML) не поддерживается. Выберите в панели формат «V2Ray / base64» или список ссылок."
             head.startsWith("{") || head.startsWith("[") ->
-                "Подписка в формате JSON (sing-box/Xray) не поддерживается. Выберите в панели формат «V2Ray / base64» или список ссылок."
+                "Подписка в формате JSON, но без серверов VLESS/VMess/Trojan/Shadowsocks (sing-box не поддерживается). " +
+                    "Выберите в панели формат «V2Ray / base64» или Xray-JSON. Начало ответа: «${preview(content)}»"
             downloaded -> "Подписка загружена, но серверов в ней не нашлось (VLESS, VMess, Trojan, Shadowsocks). " +
                 "Начало ответа: «${preview(content)}»"
             else -> "Не найдены поддерживаемые VPN-ссылки (VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC)"
         }
     }
 
+    /** Marker for profiles stored as a ready Xray `outbounds` array (Xray-JSON subscriptions). */
+    const val XRAY_JSON_PREFIX = "xrayjson:"
+    private val xrayProxyProtocols = setOf("vless", "vmess", "trojan", "shadowsocks")
+
+    /**
+     * Xray-JSON subscriptions (what Happ/v2rayNG-style panels send): an array of complete Xray configs,
+     * one per server, with the display name in `remarks`. The outbounds are kept as they are, so every
+     * transport/security option of the panel survives without being rebuilt from a share link.
+     */
+    private fun parseXrayJson(text: String, source: String?): List<VpnProfile> = runCatching {
+        val root = Json.parseToJsonElement(text)
+        val configs = when (root) { is JsonArray -> root.toList(); is JsonObject -> listOf(root); else -> emptyList() }
+        configs.mapNotNull { config ->
+            val obj = config as? JsonObject ?: return@mapNotNull null
+            val outbounds = obj["outbounds"] as? JsonArray ?: return@mapNotNull null
+            val main = outbounds.firstOrNull { o ->
+                o is JsonObject && o["protocol"]?.jsonPrimitive?.contentOrNull?.lowercase() in xrayProxyProtocols
+            } as? JsonObject ?: return@mapNotNull null
+            val settings = main["settings"] as? JsonObject
+            val entry = ((settings?.get("vnext") ?: settings?.get("servers")) as? JsonArray)?.firstOrNull() as? JsonObject
+                ?: return@mapNotNull null
+            val host = entry["address"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val port = entry["port"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.takeIf { it in 1..65535 } ?: return@mapNotNull null
+            val name = obj["remarks"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: host
+            val protocol = when (main["protocol"]?.jsonPrimitive?.contentOrNull?.lowercase()) {
+                "vmess" -> "VMess"
+                "shadowsocks" -> "Shadowsocks"
+                else -> main["protocol"]?.jsonPrimitive?.contentOrNull.orEmpty().replaceFirstChar { it.uppercase() }
+            }
+            val payload = Base64.getUrlEncoder().withoutPadding().encodeToString(outbounds.toString().toByteArray(StandardCharsets.UTF_8))
+            VpnProfile(UUID.randomUUID().toString(), name, protocol, host, port, XRAY_JSON_PREFIX + payload, source)
+        }.distinctBy { it.shareUri }
+    }.getOrDefault(emptyList())
+
+    /** The stored Xray `outbounds` array text of an [XRAY_JSON_PREFIX] profile. */
+    fun xrayJsonOutbounds(shareUri: String): String =
+        String(Base64.getUrlDecoder().decode(shareUri.removePrefix(XRAY_JSON_PREFIX)), StandardCharsets.UTF_8)
+
     fun parse(input: String, subscriptionUrl: String? = null): List<VpnProfile> {
         val candidates = mutableListOf<String>()
         val trimmed = input.trim().removePrefix("\uFEFF")
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+            parseXrayJson(trimmed, subscriptionUrl).takeIf { it.isNotEmpty() }?.let { return it }
+        }
         if (trimmed.startsWith("vmess://", true) || trimmed.startsWith("vless://", true) || trimmed.startsWith("trojan://", true) || trimmed.startsWith("ss://", true)) {
             candidates += trimmed.lines()
         } else {

@@ -100,4 +100,27 @@ class VpnSubscriptionParsingTest {
         assertTrue(p.contains("Use Happ app"))
         assertTrue(!p.contains("AbCdEf0123456789"))
     }
+
+    @Test fun xrayJsonSubscriptionIsImported() {
+        val json = """[{"remarks":"🇩🇪 Germany","outbounds":[
+            {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"de.example.com","port":443,
+              "users":[{"id":"11111111-2222-3333-4444-555555555555","encryption":"none","flow":"xtls-rprx-vision"}]}]},
+             "streamSettings":{"network":"tcp","security":"reality"}},
+            {"tag":"direct","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}]},
+          {"remarks":"Trojan NL","outbounds":[{"tag":"proxy","protocol":"trojan","settings":{"servers":[
+            {"address":"nl.example.com","port":8443,"password":"x"}]}}]}]"""
+        val profiles = VpnShareLinkParser.parse(json, "https://panel.example/sub/abc")
+        assertEquals(listOf("🇩🇪 Germany", "Trojan NL"), profiles.map { it.name })
+        assertEquals(listOf("Vless", "Trojan"), profiles.map { it.protocol })
+        assertEquals(listOf("de.example.com", "nl.example.com"), profiles.map { it.server })
+        assertEquals(listOf(443, 8443), profiles.map { it.port })
+        val stored = VpnShareLinkParser.xrayJsonOutbounds(profiles[0].shareUri)
+        assertTrue(stored.contains("xtls-rprx-vision") && stored.contains("reality"))
+    }
+
+    @Test fun jsonWithoutProxyOutboundsIsExplained() {
+        val body = """{"outbounds":[{"type":"selector","tag":"x"}]}"""
+        assertTrue(VpnShareLinkParser.parse(body, null).isEmpty())
+        assertTrue(VpnShareLinkParser.explainEmpty(body, true).contains("JSON"))
+    }
 }

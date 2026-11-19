@@ -12,7 +12,15 @@ import java.util.Base64
 internal object XrayConfigFactory {
     /** [serverIp] pins the outbound to an already resolved address (see [MusicVpnService]). */
     fun build(profile: VpnProfile, serverIp: String? = null): String {
-        val outbound = when (profile.protocol.lowercase()) {
+        var extraOutbounds = emptyList<JSONObject>()
+        val outbound = if (profile.shareUri.startsWith(VpnShareLinkParser.XRAY_JSON_PREFIX)) {
+            val all = JSONArray(VpnShareLinkParser.xrayJsonOutbounds(profile.shareUri))
+            val items = (0 until all.length()).mapNotNull { all.optJSONObject(it) }
+            val main = items.first { it.optString("protocol").lowercase() in setOf("vless", "vmess", "trojan", "shadowsocks") }
+            // Keep helper outbounds the main one may reference (e.g. a fragment dialer); direct/block are ours.
+            extraOutbounds = items.filter { it !== main && it.optString("tag") !in setOf("proxy", "direct", "block") }
+            main
+        } else when (profile.protocol.lowercase()) {
             "vless" -> vless(profile.shareUri)
             "vmess" -> vmess(profile.shareUri)
             "trojan" -> trojan(profile.shareUri)
@@ -32,7 +40,7 @@ internal object XrayConfigFactory {
                 .put("settings", JSONObject().put("name", "xxwmusic0").put("mtu", 1500).put("userLevel", 8))
                 .put("sniffing", JSONObject().put("enabled", true)
                     .put("destOverride", JSONArray().put("http").put("tls").put("quic")))))
-            put("outbounds", JSONArray().put(outbound)
+            put("outbounds", JSONArray().put(outbound).apply { extraOutbounds.forEach { put(it) } }
                 .put(JSONObject().put("tag", "direct").put("protocol", "freedom"))
                 .put(JSONObject().put("tag", "block").put("protocol", "blackhole")))
             put("routing", JSONObject().put("domainStrategy", "AsIs").put("rules", JSONArray()))

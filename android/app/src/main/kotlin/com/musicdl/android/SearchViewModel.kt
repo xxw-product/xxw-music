@@ -791,17 +791,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val waveKeys = _state.value.wave.map(Wave::recordingKey).toSet()
                 val current = _state.value.player.song
                 if (current != null && Wave.recordingKey(current) !in waveKeys) return@launch
-                if (playbackQueue.size - playbackQueue.index - 1 >= 6) { delay(3_000L); continue }
+                if (playbackQueue.size - playbackQueue.index - 1 >= 6) { delay(2_000L); continue }
+                // Never repeat anything already queued or played in this session, however long it runs.
+                val seen = waveKeys + playbackQueue.items.map(Wave::recordingKey) + playbackQueue.historyItems.map(Wave::recordingKey)
                 val build = runCatching {
                     withTimeoutOrNull(30_000L) {
                         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                         try {
-                            scope.async { engine().build(profile, waveStore.generation, waveKeys, fast = true, limit = 10) }.await()
+                            scope.async { engine().build(profile, waveStore.generation, seen, fast = true, limit = 10) }.await()
                         } finally { scope.cancel() }
                     }
                 }.getOrNull()
                 if (epoch != waveEpoch) return@launch
-                val fresh = build?.tracks.orEmpty().filter { Wave.recordingKey(it) !in waveKeys }.take(10)
+                val fresh = build?.tracks.orEmpty().filter { Wave.recordingKey(it) !in seen }.take(10)
                 waveStore.generation = waveStore.generation + 1
                 if (fresh.isEmpty()) {
                     failures++

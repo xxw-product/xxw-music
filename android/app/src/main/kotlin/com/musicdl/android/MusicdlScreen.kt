@@ -320,7 +320,10 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
             },
             bottomBar = {
                 Column {
-                    AnimatedVisibility(state.player.song != null) {
+                    // The wave tab has its own player card; two players on one page look wrong.
+                    val waveCardShown = state.tab == FeedTab.WAVE && !state.isWaveLoading &&
+                        state.player.song?.let { current -> state.wave.any { it.key() == current.key() } } == true
+                    AnimatedVisibility(state.player.song != null && !waveCardShown) {
                         MiniPlayer(state, progressFlow = viewModel.playerProgress,
                             onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
                             onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
@@ -347,6 +350,11 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                             onToggleWeights = { showWeights = !showWeights },
                             onStart = viewModel::startWave,
                             onWeight = viewModel::setGenreWeight,
+                            onToggle = viewModel::togglePlayPause,
+                            onNext = viewModel::playNext,
+                            onLike = { viewModel.likeCurrent() },
+                            onDislike = { viewModel.dislikeCurrent() },
+                            onResume = { state.wave.firstOrNull()?.let { viewModel.playOrToggle(it) } },
                         )
                     }
                 }
@@ -356,16 +364,6 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                     } else if (state.wave.isEmpty()) {
                         item { NoticeCard(state.error ?: "Начните слушать свою волну.") }
                     } else {
-                        item {
-                            WaveMiniPlayer(
-                                state = state,
-                                onToggle = viewModel::togglePlayPause,
-                                onNext = viewModel::playNext,
-                                onLike = { viewModel.likeCurrent() },
-                                onDislike = { viewModel.dislikeCurrent() },
-                                onResume = { state.wave.firstOrNull()?.let { viewModel.playOrToggle(it) } },
-                            )
-                        }
                     }
                 } else if (state.tab == FeedTab.SETTINGS) {
                     item { SettingsContent(state, viewModel) }
@@ -643,7 +641,13 @@ internal fun WaveCard(
     onToggleWeights: () -> Unit,
     onStart: () -> Unit,
     onWeight: (String, Float) -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onLike: () -> Unit,
+    onDislike: () -> Unit,
+    onResume: () -> Unit,
 ) {
+    val hasWave = state.wave.isNotEmpty() && !state.isWaveLoading
     Box(
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
             .background(Vinyl).border(1.dp, Color(0xFF303238), MaterialTheme.shapes.extraLarge),
@@ -667,14 +671,15 @@ internal fun WaveCard(
                 Equalizer(active = state.player.isPlaying, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
-            Spacer(Modifier.height(40.dp))
+            if (hasWave) WavePlayerBody(state, onToggle, onNext, onLike, onDislike, onResume)
+            Spacer(Modifier.height(if (hasWave) 4.dp else 40.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (state.isWaveLoading) CircularProgressIndicator(Modifier.size(48.dp).padding(10.dp), strokeWidth = 1.5.dp, color = Silver)
                 else TransportButton(prominent = true, compact = true, onClick = onStart)
                 Column(Modifier.weight(1f)) {
-                    Text(if (state.isWaveLoading) "Собираем вашу волну" else "Включить волну", color = Silver,
+                    Text(if (state.isWaveLoading) "Собираем вашу волну" else if (hasWave) "Встряхнуть волну" else "Включить волну", color = Silver,
                         style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text("Знакомое и ещё не открытое", color = Silver.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
+                    if (!hasWave) Text("Знакомое и ещё не открытое", color = Silver.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall)
                 }
                 TextButton(onClick = onToggleWeights) { Text(if (showWeights) "Скрыть" else "Жанры", color = Silver) }
             }
@@ -686,9 +691,9 @@ internal fun WaveCard(
     }
 }
 
-/** Yandex-style wave player: one current track, no list. */
+/** Wave player body shown inside the vinyl card: one current track, no list. */
 @Composable
-private fun WaveMiniPlayer(
+private fun WavePlayerBody(
     state: MusicUiState,
     onToggle: () -> Unit,
     onNext: () -> Unit,
@@ -701,18 +706,16 @@ private fun WaveMiniPlayer(
     val song = current ?: state.wave.first()
     val liked = song.key() in state.likedKeys
     Column(
-        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
-            .background(Color(0xFF111215)).border(1.dp, Color(0xFF303238), MaterialTheme.shapes.extraLarge)
-            .padding(16.dp),
+        Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         CoverImage(
             url = if (current != null) state.player.artworkUrl ?: song.coverUrl else song.coverUrl,
-            modifier = Modifier.fillMaxWidth(0.78f).aspectRatio(1f).clip(MaterialTheme.shapes.large),
+            modifier = Modifier.fillMaxWidth(0.62f).aspectRatio(1f).clip(MaterialTheme.shapes.large),
         ) {
             Box(
-                Modifier.fillMaxWidth(0.78f).aspectRatio(1f).clip(MaterialTheme.shapes.large).background(Color(0xFF1B1D22)),
+                Modifier.fillMaxWidth(0.62f).aspectRatio(1f).clip(MaterialTheme.shapes.large).background(Color(0xFF1B1D22)),
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Rounded.MusicNote, null, Modifier.size(56.dp), tint = Silver.copy(alpha = 0.5f)) }
         }

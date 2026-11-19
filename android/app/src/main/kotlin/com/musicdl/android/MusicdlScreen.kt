@@ -14,6 +14,8 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -344,7 +346,10 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
             ) {
                 if (state.tab == FeedTab.WAVE) {
                     item {
+                        val fillPage = state.wave.isNotEmpty() && !state.isWaveLoading
+                        Box(if (fillPage) Modifier.fillParentMaxHeight().padding(bottom = 8.dp) else Modifier) {
                         WaveCard(
+                            fillHeight = fillPage,
                             state = state,
                             showWeights = showWeights,
                             onToggleWeights = { showWeights = !showWeights },
@@ -352,10 +357,13 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                             onWeight = viewModel::setGenreWeight,
                             onToggle = viewModel::togglePlayPause,
                             onNext = viewModel::playNext,
+                            onPrevious = viewModel::playPrevious,
+                            onOpenPlayer = { fullPlayerLyrics = false; showFullPlayer = true },
                             onLike = { viewModel.likeCurrent() },
                             onDislike = { viewModel.dislikeCurrent() },
                             onResume = { state.wave.firstOrNull()?.let { viewModel.playOrToggle(it) } },
                         )
+                        }
                     }
                 }
                 if (state.tab == FeedTab.WAVE) {
@@ -636,6 +644,7 @@ private fun SourcesDialog(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun WaveCard(
+    fillHeight: Boolean = false,
     state: MusicUiState,
     showWeights: Boolean,
     onToggleWeights: () -> Unit,
@@ -643,17 +652,22 @@ internal fun WaveCard(
     onWeight: (String, Float) -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onOpenPlayer: () -> Unit,
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onResume: () -> Unit,
 ) {
     val hasWave = state.wave.isNotEmpty() && !state.isWaveLoading
     Box(
-        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
+        modifier = (if (fillHeight) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).clip(MaterialTheme.shapes.extraLarge)
             .background(Vinyl).border(1.dp, Color(0xFF303238), MaterialTheme.shapes.extraLarge),
     ) {
         VinylAtmosphere(Modifier.matchParentSize())
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            modifier = (if (fillHeight) Modifier.fillMaxSize() else Modifier).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -671,8 +685,12 @@ internal fun WaveCard(
                 Equalizer(active = state.player.isPlaying, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
-            if (hasWave) WavePlayerBody(state, onToggle, onNext, onLike, onDislike, onResume)
-            Spacer(Modifier.height(if (hasWave) 4.dp else 40.dp))
+            if (hasWave) {
+                Box(
+                    (if (fillHeight) Modifier.weight(1f) else Modifier).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) { WavePlayerBody(state, onToggle, onNext, onPrevious, onOpenPlayer, onLike, onDislike, onResume) }
+            } else Spacer(Modifier.height(40.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (state.isWaveLoading) CircularProgressIndicator(Modifier.size(48.dp).padding(10.dp), strokeWidth = 1.5.dp, color = Silver)
                 else TransportButton(prominent = true, compact = true, onClick = onStart)
@@ -697,6 +715,8 @@ private fun WavePlayerBody(
     state: MusicUiState,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onOpenPlayer: () -> Unit,
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onResume: () -> Unit,
@@ -705,19 +725,37 @@ private fun WavePlayerBody(
     val current = state.player.song?.takeIf { it.key() in waveKeys }
     val song = current ?: state.wave.first()
     val liked = song.key() in state.likedKeys
+    var dragX by remember { mutableFloatStateOf(0f) }
+    // Swipe the cover to change tracks, tap it to open the full player.
+    val coverModifier = Modifier.fillMaxWidth(0.72f).aspectRatio(1f)
+        .graphicsLayer { translationX = dragX; alpha = 1f - (kotlin.math.abs(dragX) / 1200f).coerceIn(0f, 0.5f) }
+        .clip(MaterialTheme.shapes.large)
+        .clickable(enabled = current != null, onClick = onOpenPlayer)
+        .pointerInput(current?.key()) {
+            val threshold = 80.dp.toPx()
+            detectHorizontalDragGestures(
+                onDragEnd = {
+                    if (current != null) {
+                        if (dragX < -threshold) onNext() else if (dragX > threshold) onPrevious()
+                    }
+                    dragX = 0f
+                },
+                onDragCancel = { dragX = 0f },
+                onHorizontalDrag = { change, amount -> change.consume(); dragX += amount },
+            )
+        }
     Column(
         Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         CoverImage(
             url = if (current != null) state.player.artworkUrl ?: song.coverUrl else song.coverUrl,
-            modifier = Modifier.fillMaxWidth(0.62f).aspectRatio(1f).clip(MaterialTheme.shapes.large),
+            modifier = coverModifier,
         ) {
-            Box(
-                Modifier.fillMaxWidth(0.62f).aspectRatio(1f).clip(MaterialTheme.shapes.large).background(Color(0xFF1B1D22)),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.MusicNote, null, Modifier.size(56.dp), tint = Silver.copy(alpha = 0.5f)) }
+            Box(coverModifier.background(Color(0xFF1B1D22)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.MusicNote, null, Modifier.size(56.dp), tint = Silver.copy(alpha = 0.5f))
+            }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(song.songName.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
@@ -738,9 +776,6 @@ private fun WavePlayerBody(
                 prominent = true,
                 onClick = if (current != null) onToggle else onResume,
             )
-            IconButton(onClick = onNext, enabled = current != null) {
-                Icon(Icons.Rounded.SkipNext, "Дальше", Modifier.size(30.dp), tint = Silver)
-            }
             IconButton(onClick = onLike, enabled = current != null) {
                 Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Нравится", tint = Silver)
             }

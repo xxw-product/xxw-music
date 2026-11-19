@@ -18,7 +18,8 @@ private val DEFAULT_SOURCES: Set<String> = setOf(
 /** Search needs the user's own account; Yandex still imports playlist links without a token. */
 private val TOKEN_GATED_SOURCES: Set<String> = setOf("YandexMusicClient")
 
-val ALL_SOURCES: Set<String> = MusicClientRegistry.registeredModules - "VKMusicClient"
+val ALL_SOURCES: Set<String> = // Yandex stays available only for playlist transfer, not as a search/stream source.
+MusicClientRegistry.registeredModules - setOf("VKMusicClient", "YandexMusicClient")
 
 val RECOMMENDED_SOURCES: Set<String> = DEFAULT_SOURCES.filter { it in ALL_SOURCES }.toSet()
 

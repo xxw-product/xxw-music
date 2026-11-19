@@ -8,6 +8,7 @@ import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -444,6 +445,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     var vpnInput by rememberSaveable { mutableStateOf("") }
     val vpnPings = remember { mutableStateMapOf<String, Long>() }
     var vpnPinging by remember { mutableStateOf(false) }
+    var vpnListOpen by rememberSaveable { mutableStateOf(false) }
     var vpnAutoSwitch by remember { mutableStateOf(false) }
     var vpnAutoUpdate by remember { mutableStateOf(true) }
     var vpnClient by remember { mutableStateOf(vpnRepository.subscriptionClient) }
@@ -484,10 +486,10 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     }
     val usedFraction = if (limit > 0L) (used.toFloat() / limit).coerceIn(0f, 1f) else 0f
     val full = limit in 1..used
-    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Музыка в вашем ритме", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
 
-        SettingsGroup("VPN для музыки") {
+        SettingsGroup("VPN для музыки", startExpanded = true) {
             OutlinedTextField(
                 value = vpnInput,
                 onValueChange = { vpnInput = it.take(2 * 1024 * 1024) },
@@ -533,27 +535,74 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Spacer(Modifier.width(8.dp))
                 Text("Добавить подписку")
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = {
+                        if (vpnState == MusicVpnService.STATE_CONNECTED || vpnState == MusicVpnService.STATE_CONNECTING) {
+                            MusicVpnService.stop(vpnContext)
+                        } else if (vpnSelectedId.isBlank()) {
+                            vpnStatus = "Сначала добавьте подписку и выберите сервер"
+                        } else {
+                            val permissionIntent = VpnService.prepare(vpnContext)
+                            if (permissionIntent == null) MusicVpnService.start(vpnContext, vpnSelectedId)
+                            else vpnPermissionLauncher.launch(permissionIntent)
+                        }
+                    },
+                    enabled = !vpnBusy && vpnProfiles.isNotEmpty() && vpnState != MusicVpnService.STATE_CONNECTING,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (vpnState == MusicVpnService.STATE_CONNECTED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    ),
+                ) {
+                    Icon(if (vpnState == MusicVpnService.STATE_CONNECTED || vpnState == MusicVpnService.STATE_CONNECTING) Icons.Rounded.PowerSettingsNew else Icons.Rounded.Shield,
+                        contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(when (vpnState) {
+                        MusicVpnService.STATE_CONNECTED -> "Отключить VPN"
+                        MusicVpnService.STATE_CONNECTING -> "Подключаем…"
+                        else -> "Подключить VPN"
+                    })
+                }
+                if (vpnProfiles.isNotEmpty()) OutlinedButton(
+                    enabled = !vpnPinging && vpnState != MusicVpnService.STATE_CONNECTED,
+                    onClick = {
+                        vpnPinging = true
+                        vpnProfiles.forEach { vpnPings[it.id] = PING_MEASURING }
+                        vpnScope.launch {
+                            ServerPing.pingAll(vpnProfiles) { id, ms -> vpnPings[id] = ms }
+                            vpnPinging = false
+                        }
+                    },
+                ) { Text(if (vpnPinging) "Пинг…" else "Пинг") }
+            }
+            if (vpnStatus.isNotBlank()) Text(vpnStatus, style = MaterialTheme.typography.bodySmall,
+                color = if (vpnState == MusicVpnService.STATE_ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             if (vpnProfiles.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("ВЫБЕРИТЕ СЕРВЕР", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    TextButton(
-                        enabled = !vpnPinging && vpnState != MusicVpnService.STATE_CONNECTED,
-                        onClick = {
-                            vpnPinging = true
-                            vpnProfiles.forEach { vpnPings[it.id] = PING_MEASURING }
-                            vpnScope.launch {
-                                ServerPing.pingAll(vpnProfiles) { id, ms -> vpnPings[id] = ms }
-                                vpnPinging = false
-                            }
-                        },
-                    ) { Text(if (vpnPinging) "Проверяем…" else "Проверить пинг") }
+                val selected = vpnProfiles.firstOrNull { it.id == vpnSelectedId }
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { vpnListOpen = !vpnListOpen }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Серверы · ${vpnProfiles.size}", style = MaterialTheme.typography.titleSmall)
+                        if (!vpnListOpen && selected != null) {
+                            val ping = vpnPings[selected.id]?.let { pingLabel(it).first }
+                            Text(listOfNotNull(selected.name, ping).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Icon(if (vpnListOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        if (vpnListOpen) "Свернуть список" else "Развернуть список")
                 }
                 if (vpnState == MusicVpnService.STATE_CONNECTED) {
-                    Text("Чтобы замерить пинг, отключите VPN: при включённом туннеле замер был бы неточным.",
+                    Text("Пинг можно замерить только при выключенном VPN.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            if (vpnListOpen) {
             vpnProfiles.forEach { profile ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
@@ -609,6 +658,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                     }) { Icon(Icons.Rounded.DeleteOutline, "Удалить сервер") }
                 }
             }
+            }
             VpnSwitchRow(
                 title = "Автопереключение серверов",
                 caption = "",
@@ -623,40 +673,9 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 vpnPrefs.edit().putBoolean(MusicVpnService.KEY_AUTO_UPDATE, it).apply()
                 SubscriptionRefreshWorker.apply(vpnContext, it)
             }
-            Button(
-                onClick = {
-                    if (vpnState == MusicVpnService.STATE_CONNECTED || vpnState == MusicVpnService.STATE_CONNECTING) {
-                        MusicVpnService.stop(vpnContext)
-                    } else if (vpnSelectedId.isBlank()) {
-                        vpnStatus = "Сначала добавьте подписку и выберите сервер"
-                    } else {
-                        val permissionIntent = VpnService.prepare(vpnContext)
-                        if (permissionIntent == null) MusicVpnService.start(vpnContext, vpnSelectedId)
-                        else vpnPermissionLauncher.launch(permissionIntent)
-                    }
-                },
-                enabled = !vpnBusy && vpnProfiles.isNotEmpty() && vpnState != MusicVpnService.STATE_CONNECTING,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (vpnState == MusicVpnService.STATE_CONNECTED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                ),
-            ) {
-                Icon(if (vpnState == MusicVpnService.STATE_CONNECTED || vpnState == MusicVpnService.STATE_CONNECTING) Icons.Rounded.PowerSettingsNew else Icons.Rounded.Shield,
-                    contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(when (vpnState) {
-                    MusicVpnService.STATE_CONNECTED -> "Отключить VPN"
-                    MusicVpnService.STATE_CONNECTING -> "Подключаем…"
-                    else -> "Подключить VPN"
-                })
-            }
-            if (vpnStatus.isNotBlank()) Text(vpnStatus, style = MaterialTheme.typography.bodySmall,
-                color = if (vpnState == MusicVpnService.STATE_ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        SettingsGroup("Музыкальные сервисы") {
-            Text("Ваша музыка — в одном месте", style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold)
+        SettingsGroup("Перенос музыки") {
             Text("Яндекс: публичный плейлист переносится без входа.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.serviceStatus.isNotBlank()) Text(state.serviceStatus,
@@ -694,6 +713,32 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             state.linkImportResult?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        }
+
+        SettingsGroup("Перенос из аккаунта Яндекса") {
+            Text("Лайки, плейлисты, исполнители и альбомы", style = MaterialTheme.typography.titleMedium)
+            Text("Только для всей медиатеки нужен токен аккаунта. Для публичного плейлиста используйте ссылку в разделе «Музыкальные сервисы» выше — без токена. Треки сопоставляются с каталогом XXW Music; спорные версии попадают в плейлист «Перенос · требует проверки», ненайденные показываются списком.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = yandexToken,
+                onValueChange = { yandexToken = it },
+                label = { Text("Токен Яндекс Музыки") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(enabled = yandexToken.isNotBlank() && !state.isImporting,
+                    onClick = { model.setYandexToken(yandexToken); model.importYandexMusic() }) {
+                    Text(if (state.isImporting) "Переносим…" else "Начать перенос")
+                }
+                if (state.isImporting) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Silver)
+                    Text(state.importProgress, Modifier.padding(start = 10.dp),
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Text("Импорт только читает ваш аккаунт. Плейлисты создаются как ссылки на треки каталога, файлы Яндекса не копируются.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
 
         SettingsGroup("Офлайн") {
@@ -780,7 +825,25 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
 
-        SettingsGroup("Ключи и токены") {
+        SettingsGroup("Источники музыки") {
+            ALL_SOURCES.sortedBy { sourceName(it) }.forEach { source ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(sourceName(source), style = MaterialTheme.typography.bodyLarge)
+                        if (needsToken(source)) Text("нужен токен · не входит в «Авто»",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(source in state.activeSources, onCheckedChange = { model.toggleSource(source) },
+                        colors = vinylSwitchColors(),
+                        enabled = state.activeSources.size > 1 || source !in state.activeSources,
+                        modifier = Modifier.semantics { contentDescription = sourceName(source) })
+                }
+            }
+            Text("Qobuz и SoundCloud работают без ключей; ключи выше нужны только для собственного приложения или аккаунта.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+
+        SettingsGroup("Ключи доступа") {
             Text("Qobuz", style = MaterialTheme.typography.titleMedium)
             Text("App ID и секрет подписывают каждый запрос каталога; без своих значений используются встроенные. Пользовательский токен открывает аккаунт Qobuz, публичный каталог работает и без него.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -823,50 +886,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Text(if (soundcloudId.isBlank()) "Очистить client_id" else "Сохранить client_id")
             }
             Text("Ключи хранятся только на этом устройстве и никогда не попадают в экспорт медиатеки.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-
-        SettingsGroup("Источники музыки") {
-            ALL_SOURCES.sortedBy { sourceName(it) }.forEach { source ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(sourceName(source), style = MaterialTheme.typography.bodyLarge)
-                        if (needsToken(source)) Text("нужен токен · не входит в «Авто»",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(source in state.activeSources, onCheckedChange = { model.toggleSource(source) },
-                        colors = vinylSwitchColors(),
-                        enabled = state.activeSources.size > 1 || source !in state.activeSources,
-                        modifier = Modifier.semantics { contentDescription = sourceName(source) })
-                }
-            }
-            Text("Qobuz и SoundCloud работают без ключей; ключи выше нужны только для собственного приложения или аккаунта.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-
-        SettingsGroup("Яндекс · вся медиатека аккаунта") {
-            Text("Лайки, плейлисты, исполнители и альбомы", style = MaterialTheme.typography.titleMedium)
-            Text("Только для всей медиатеки нужен токен аккаунта. Для публичного плейлиста используйте ссылку в разделе «Музыкальные сервисы» выше — без токена. Треки сопоставляются с каталогом XXW Music; спорные версии попадают в плейлист «Перенос · требует проверки», ненайденные показываются списком.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(
-                value = yandexToken,
-                onValueChange = { yandexToken = it },
-                label = { Text("Токен Яндекс Музыки") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(enabled = yandexToken.isNotBlank() && !state.isImporting,
-                    onClick = { model.setYandexToken(yandexToken); model.importYandexMusic() }) {
-                    Text(if (state.isImporting) "Переносим…" else "Начать перенос")
-                }
-                if (state.isImporting) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Silver)
-                    Text(state.importProgress, Modifier.padding(start = 10.dp),
-                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Text("Импорт только читает ваш аккаунт. Плейлисты создаются как ссылки на треки каталога, файлы Яндекса не копируются.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
 
@@ -959,11 +978,29 @@ private fun vinylSwitchColors() = SwitchDefaults.colors(
 )
 
 @Composable
-private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(color = Color(0xFF101114), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Color(0xFF25272C))) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+private fun SettingsGroup(
+    title: String,
+    startExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(startExpanded) }
+    Surface(color = Color(0xFF101114), shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Color(0xFF25272C))) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f))
+                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    if (expanded) "Свернуть" else "Развернуть", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            AnimatedVisibility(expanded) {
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp), content = content,
+                )
+            }
         }
     }
 }

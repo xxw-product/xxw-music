@@ -36,4 +36,19 @@ class ServerPingTest {
             assertTrue(seen.values.all { it > 0 })
         }
     }
+
+    private fun profile(id: String, protocol: String = "Vless") = VpnProfile(id, id, protocol, "h$id", 443, "x")
+
+    @Test fun autoSwitchPicksFastestReachableConnectableServer() {
+        val profiles = listOf(profile("a"), profile("b"), profile("c"), profile("d", "Hysteria2"), profile("e"), profile("f"))
+        val pings = mapOf("a" to 300L, "b" to 40L, "c" to ServerPing.UNREACHABLE, "d" to 10L, "e" to 120L)
+        // f has no result, c is down, d is UDP-only, a is the server that just failed
+        val order = AutoSwitch.order(profiles, failed = setOf("a"), pings = pings).map { it.id }
+        assertEquals(listOf("b", "e"), order)
+    }
+
+    @Test fun autoSwitchReturnsNothingWhenEverythingIsDown() {
+        val profiles = listOf(profile("a"), profile("b"))
+        assertTrue(AutoSwitch.order(profiles, emptySet(), mapOf("a" to -1L, "b" to -1L)).isEmpty())
+    }
 }

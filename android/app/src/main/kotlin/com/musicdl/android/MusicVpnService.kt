@@ -14,7 +14,12 @@ import androidx.core.content.ContextCompat
 import java.lang.reflect.Proxy
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 
 /** Per-app VPN service. Android routes only this package into the TUN interface. */
 class MusicVpnService : VpnService() {
@@ -22,6 +27,14 @@ class MusicVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     @Volatile private var coreController: Any? = null
     @Volatile private var starting = false
+    private val scheduler = Executors.newSingleThreadScheduledExecutor()
+    private var watchdog: ScheduledFuture<*>? = null
+    private val switching = AtomicBoolean(false)
+    @Volatile private var userStopped = false
+    @Volatile private var currentProfileId: String? = null
+    @Volatile private var lastLabel = ""
+    @Volatile private var failures = 0
+    private val failedIds = ConcurrentHashMap.newKeySet<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -55,62 +68,147 @@ class MusicVpnService : VpnService() {
     private fun startTunnel(profileId: String) {
         if (starting || coreController != null) return
         starting = true
+        userStopped = false
         publishState(STATE_CONNECTING, "Подготавливаем защищённое подключение…")
         worker.execute {
             try {
-                val profile = VpnSubscriptionRepository(this).getProfiles().firstOrNull { it.id == profileId }
-                    ?: error("Сервер больше не найден. Обновите список подписок.")
-                // Resolve the server now, while the tunnel does not exist yet. Xray would otherwise
-                // resolve it through the tunnel, and its connection to the server would loop back in.
-                val serverAddresses = resolveServer(profile.server)
-                val serverIp = (serverAddresses.firstOrNull { it is Inet4Address } ?: serverAddresses.first())
-                    .hostAddress.orEmpty()
-                val config = XrayConfigFactory.build(profile, serverIp)
-                val builder = Builder()
-                    .setSession("XXW Music VPN · ${profile.name}")
-                    .setMtu(1500)
-                    .addAddress("10.88.0.1", 30)
-                    .addAddress("fd00:88::1", 126)
-                    .addDnsServer("1.1.1.1")
-                    .addDnsServer("8.8.8.8")
-                    // Strict allow-list: all other packages continue using the physical network.
-                    .addAllowedApplication(packageName)
-                // Everything except the VPN server itself goes into the tunnel.
-                VpnRoutes.routesExcluding(serverAddresses).forEach { builder.addRoute(it.address, it.prefix) }
-                val established = builder.establish() ?: error("Android не разрешил создать VPN-интерфейс")
-                tun = established
-                val controller = createXrayController()
-                coreController = controller
-                val start = controller.javaClass.methods.firstOrNull {
-                    it.name == "startLoop" && it.parameterTypes.size == 2 &&
-                        it.parameterTypes[1] == Int::class.javaPrimitiveType
-                } ?: error("В libv2ray отсутствует метод CoreController.startLoop(String, int)")
-                start.invoke(controller, config, established.fd)
-                val running = controller.javaClass.methods.firstOrNull {
-                    it.name.equals("getIsRunning", true) || it.name.equals("isRunning", true)
-                }?.invoke(controller) as? Boolean ?: true
-                if (!running) error("Xray не запустил туннель")
-                // «Подключено» is only shown after a real request went through the server.
-                val delay = measureDelay(controller)
-                saveActiveProfile(profileId)
-                val label = "Подключено · ${profile.name} · $delay мс"
-                publishState(STATE_CONNECTED, label)
-                updateNotification(label)
+                connectProfile(profileId, switched = false)
+                startWatchdog()
             } catch (error: Throwable) {
-                Log.e(TAG, "Unable to start Xray VPN", error)
-                stopCoreQuietly()
-                runCatching { tun?.close() }
-                tun = null
-                coreController = null
-                publishState(STATE_ERROR,
-                    (error as? java.lang.reflect.InvocationTargetException)?.targetException?.message
-                        ?: error.message ?: "Ошибка запуска VPN")
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                fail(error)
             } finally {
                 starting = false
             }
         }
+    }
+
+    /** Opens the tunnel and the Xray core for one server; throws if anything does not work. */
+    private fun connectProfile(profileId: String, switched: Boolean) {
+        val profile = VpnSubscriptionRepository(this).getProfiles().firstOrNull { it.id == profileId }
+            ?: error("Сервер больше не найден. Обновите список подписок.")
+        // Resolve the server now, while the tunnel does not exist yet. Xray would otherwise
+        // resolve it through the tunnel, and its connection to the server would loop back in.
+        val serverAddresses = resolveServer(profile.server)
+        val serverIp = (serverAddresses.firstOrNull { it is Inet4Address } ?: serverAddresses.first())
+            .hostAddress.orEmpty()
+        val config = XrayConfigFactory.build(profile, serverIp)
+        val builder = Builder()
+            .setSession("XXW Music VPN · ${profile.name}")
+            .setMtu(1500)
+            .addAddress("10.88.0.1", 30)
+            .addAddress("fd00:88::1", 126)
+            .addDnsServer("1.1.1.1")
+            .addDnsServer("8.8.8.8")
+            // Strict allow-list: all other packages continue using the physical network.
+            .addAllowedApplication(packageName)
+        // Everything except the VPN server itself goes into the tunnel.
+        VpnRoutes.routesExcluding(serverAddresses).forEach { builder.addRoute(it.address, it.prefix) }
+        val established = builder.establish() ?: error("Android не разрешил создать VPN-интерфейс")
+        tun = established
+        val controller = createXrayController()
+        coreController = controller
+        val start = controller.javaClass.methods.firstOrNull {
+            it.name == "startLoop" && it.parameterTypes.size == 2 &&
+                it.parameterTypes[1] == Int::class.javaPrimitiveType
+        } ?: error("В libv2ray отсутствует метод CoreController.startLoop(String, int)")
+        start.invoke(controller, config, established.fd)
+        if (!isRunning(controller)) error("Xray не запустил туннель")
+        // «Подключено» is only shown after a real request went through the server.
+        val delay = measureDelay(controller)
+        currentProfileId = profileId
+        saveActiveProfile(profileId)
+        if (switched) {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_SELECTED_PROFILE, profileId).apply()
+        }
+        val label = (if (switched) "Переключено · " else "Подключено · ") + "${profile.name} · $delay мс"
+        lastLabel = label
+        publishState(STATE_CONNECTED, label)
+        updateNotification(label)
+    }
+
+    private fun isRunning(controller: Any): Boolean = controller.javaClass.methods.firstOrNull {
+        it.name.equals("getIsRunning", true) || it.name.equals("isRunning", true)
+    }?.invoke(controller) as? Boolean ?: true
+
+    private fun teardown() {
+        stopCoreQuietly()
+        runCatching { tun?.close() }
+        tun = null
+        coreController = null
+    }
+
+    private fun fail(error: Throwable) {
+        Log.e(TAG, "Xray VPN failed", error)
+        watchdog?.cancel(false)
+        teardown()
+        publishState(STATE_ERROR,
+            (error as? java.lang.reflect.InvocationTargetException)?.targetException?.message
+                ?: error.message ?: "Ошибка запуска VPN")
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /** Watches the tunnel; with auto-switch on, a dead connection moves to the next working server. */
+    private fun startWatchdog() {
+        failures = 0
+        failedIds.clear()
+        watchdog?.cancel(false)
+        watchdog = scheduler.scheduleWithFixedDelay({ checkHealth() }, 20, 15, TimeUnit.SECONDS)
+    }
+
+    private fun checkHealth() {
+        if (userStopped || starting || switching.get()) return
+        val controller = coreController ?: return
+        val healthy = isRunning(controller) && runCatching { measureDelay(controller) }.isSuccess
+        if (healthy) {
+            if (failures >= 2) publishState(STATE_CONNECTED, lastLabel)
+            failures = 0
+            failedIds.clear()
+            return
+        }
+        failures++
+        if (failures < 2) return // one lost probe is normal; two in a row is an outage
+        if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_AUTO_SWITCH, false)) {
+            if (failures == 2) publishState(STATE_CONNECTED, "Нет ответа от сервера. Включите автопереключение или выберите другой сервер.")
+            return
+        }
+        if (switching.compareAndSet(false, true)) {
+            worker.execute { try { switchServer() } finally { switching.set(false) } }
+        }
+    }
+
+    private fun switchServer() {
+        currentProfileId?.let { failedIds += it }
+        // While the dead tunnel is up, probes to other servers would be routed into it, so close it first.
+        teardown()
+        repeat(SWITCH_ROUNDS) { round ->
+            if (userStopped) return
+            publishState(STATE_CONNECTING, "Соединение потеряно — ищем другой сервер…")
+            updateNotification("Ищем рабочий сервер…")
+            val all = VpnSubscriptionRepository(this).getProfiles()
+            val pings = ConcurrentHashMap<String, Long>()
+            runBlocking { ServerPing.pingAll(all.filter { AutoSwitch.isConnectable(it) }) { id, ms -> pings[id] = ms } }
+            val tried = if (round == 0) failedIds.toSet() else emptySet() // later rounds: any server may have recovered
+            for (candidate in AutoSwitch.order(all, tried, pings).take(MAX_CANDIDATES)) {
+                if (userStopped) return
+                try {
+                    connectProfile(candidate.id, switched = true)
+                    failures = 0
+                    failedIds.clear()
+                    return
+                } catch (error: Throwable) {
+                    Log.w(TAG, "Candidate ${candidate.name} failed", error)
+                    failedIds += candidate.id
+                    teardown()
+                }
+            }
+            if (round < SWITCH_ROUNDS - 1) {
+                publishState(STATE_CONNECTING, "Нет доступных серверов — ждём сеть…")
+                var waited = 0L
+                while (waited < SWITCH_RETRY_MS && !userStopped) { Thread.sleep(500); waited += 500 }
+            }
+        }
+        if (!userStopped) fail(IllegalStateException("Соединение потеряно, рабочий сервер не найден. Проверьте интернет и подписку."))
     }
 
     private fun resolveServer(host: String): List<InetAddress> = try {
@@ -166,11 +264,10 @@ class MusicVpnService : VpnService() {
     private fun xudpBaseKey(): String = XudpKey.derive(androidId() + packageName)
 
     private fun stopTunnel() {
+        userStopped = true
+        watchdog?.cancel(false)
         worker.execute {
-            stopCoreQuietly()
-            coreController = null
-            runCatching { tun?.close() }
-            tun = null
+            teardown()
             saveActiveProfile(null)
             publishState(STATE_DISCONNECTED, "VPN отключён")
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -192,6 +289,9 @@ class MusicVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        userStopped = true
+        watchdog?.cancel(false)
+        scheduler.shutdownNow()
         stopCoreQuietly()
         if (getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_STATE, null) != STATE_ERROR) {
             publishState(STATE_DISCONNECTED, "VPN отключён")
@@ -245,6 +345,12 @@ class MusicVpnService : VpnService() {
         const val KEY_MESSAGE = "message"
         const val KEY_ACTIVE_PROFILE = "active_profile"
         const val KEY_SELECTED_PROFILE = "selected_profile"
+        const val KEY_AUTO_SWITCH = "auto_switch"
+        const val KEY_AUTO_UPDATE = "auto_update"
+        const val KEY_LAST_REFRESH = "last_refresh"
+        private const val SWITCH_ROUNDS = 6
+        private const val SWITCH_RETRY_MS = 15_000L
+        private const val MAX_CANDIDATES = 5
         private const val CHANNEL_ID = "xxw_music_vpn"
         private const val NOTIFICATION_ID = 7312
         private const val TAG = "MusicVpnService"

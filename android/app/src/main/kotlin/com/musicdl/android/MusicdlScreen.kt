@@ -304,6 +304,10 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                                 FeedTab.SETTINGS -> "Настройки"
                             }, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                         }
+                        if (state.tab == FeedTab.WAVE) {
+                            VpnMenuButton(onOpenSettings = { viewModel.setTab(FeedTab.SETTINGS) },
+                                tint = MaterialTheme.colorScheme.onSurface)
+                        }
                         if (state.tab == FeedTab.SEARCH) IconButton(onClick = { showSources = true }) {
                             Icon(Icons.Rounded.Tune, "Источники поиска")
                         }
@@ -343,7 +347,6 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                             onToggleWeights = { showWeights = !showWeights },
                             onStart = viewModel::startWave,
                             onWeight = viewModel::setGenreWeight,
-                            onOpenVpnSettings = { viewModel.setTab(FeedTab.SETTINGS) },
                         )
                     }
                 }
@@ -649,7 +652,6 @@ internal fun WaveCard(
     onToggleWeights: () -> Unit,
     onStart: () -> Unit,
     onWeight: (String, Float) -> Unit,
-    onOpenVpnSettings: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
@@ -672,7 +674,6 @@ internal fun WaveCard(
                     )
                 }
                 Equalizer(active = state.player.isPlaying, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                VpnMenuButton(onOpenSettings = onOpenVpnSettings, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
             Spacer(Modifier.height(40.dp))

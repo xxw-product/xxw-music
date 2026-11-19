@@ -55,10 +55,12 @@ fun VpnMenuButton(onOpenSettings: () -> Unit, tint: Color, modifier: Modifier = 
     var status by remember { mutableStateOf(prefs.getString(MusicVpnService.KEY_MESSAGE, "").orEmpty()) }
     val pings = remember { mutableStateMapOf<String, Long>() }
     var pinging by remember { mutableStateOf(false) }
+    var autoSwitch by remember { mutableStateOf(prefs.getBoolean(MusicVpnService.KEY_AUTO_SWITCH, false)) }
     var expanded by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(VpnMenuPage.MAIN) }
 
     fun reload() {
+        autoSwitch = prefs.getBoolean(MusicVpnService.KEY_AUTO_SWITCH, false)
         profiles = runCatching { repository.getProfiles() }.getOrDefault(emptyList())
         selectedId = (prefs.getString(MusicVpnService.KEY_SELECTED_PROFILE, null)
             ?: prefs.getString(MusicVpnService.KEY_ACTIVE_PROFILE, null)).orEmpty()
@@ -151,6 +153,13 @@ fun VpnMenuButton(onOpenSettings: () -> Unit, tint: Color, modifier: Modifier = 
                             trailing = { Icon(Icons.Rounded.ChevronRight, null) }) { page = VpnMenuPage.SERVERS }
                         MenuRow(if (pinging) "Проверяем пинг…" else "Проверить пинг", Icons.Rounded.Speed,
                             enabled = !pinging && !connected && !connecting) { measure(); page = VpnMenuPage.SERVERS }
+                    }
+                    if (profiles.isNotEmpty()) {
+                        MenuRow("Автопереключение серверов", Icons.Rounded.SwapHoriz,
+                            trailing = { androidx.compose.material3.Switch(checked = autoSwitch, onCheckedChange = null) }) {
+                            autoSwitch = !autoSwitch
+                            prefs.edit().putBoolean(MusicVpnService.KEY_AUTO_SWITCH, autoSwitch).apply()
+                        }
                     }
                     MenuRow("Настройки VPN", Icons.Rounded.Settings) { expanded = false; onOpenSettings() }
                 }

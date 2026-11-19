@@ -444,9 +444,15 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     var vpnInput by rememberSaveable { mutableStateOf("") }
     val vpnPings = remember { mutableStateMapOf<String, Long>() }
     var vpnPinging by remember { mutableStateOf(false) }
+    var vpnAutoSwitch by remember { mutableStateOf(false) }
+    var vpnAutoUpdate by remember { mutableStateOf(true) }
     var vpnClient by remember { mutableStateOf(vpnRepository.subscriptionClient) }
     val vpnPrefs = remember(vpnContext) { vpnContext.getSharedPreferences(MusicVpnService.PREFS, android.content.Context.MODE_PRIVATE) }
     var vpnSelectedId by rememberSaveable { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_SELECTED_PROFILE, null) ?: vpnPrefs.getString(MusicVpnService.KEY_ACTIVE_PROFILE, null).orEmpty()) }
+    LaunchedEffect(Unit) {
+        vpnAutoSwitch = vpnPrefs.getBoolean(MusicVpnService.KEY_AUTO_SWITCH, false)
+        vpnAutoUpdate = vpnPrefs.getBoolean(MusicVpnService.KEY_AUTO_UPDATE, true)
+    }
     var vpnState by remember { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_STATE, MusicVpnService.STATE_DISCONNECTED) ?: MusicVpnService.STATE_DISCONNECTED) }
     var vpnStatus by remember { mutableStateOf(vpnPrefs.getString(MusicVpnService.KEY_MESSAGE, "").orEmpty()) }
     var vpnBusy by remember { mutableStateOf(false) }
@@ -608,6 +614,24 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                         }
                     }) { Icon(Icons.Rounded.DeleteOutline, "Удалить сервер") }
                 }
+            }
+            VpnSwitchRow(
+                title = "Автопереключение серверов",
+                caption = "Если соединение оборвётся, VPN сам выберет ближайший рабочий сервер из ваших подписок.",
+                checked = vpnAutoSwitch,
+            ) { vpnAutoSwitch = it; vpnPrefs.edit().putBoolean(MusicVpnService.KEY_AUTO_SWITCH, it).apply() }
+            VpnSwitchRow(
+                title = "Обновлять подписки каждый час",
+                caption = run {
+                    val last = vpnPrefs.getLong(MusicVpnService.KEY_LAST_REFRESH, 0L)
+                    if (last > 0) "Последнее обновление: " + java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(last))
+                    else "Серверы из подписок обновятся автоматически, когда есть интернет."
+                },
+                checked = vpnAutoUpdate,
+            ) {
+                vpnAutoUpdate = it
+                vpnPrefs.edit().putBoolean(MusicVpnService.KEY_AUTO_UPDATE, it).apply()
+                SubscriptionRefreshWorker.apply(vpnContext, it)
             }
             Button(
                 onClick = {
@@ -967,4 +991,15 @@ internal fun pingLabel(ms: Long): Pair<String, Color> = when {
     ms < 150 -> "$ms мс" to Color(0xFF4CAF50)
     ms < 400 -> "$ms мс" to Color(0xFFFFB300)
     else -> "$ms мс" to MaterialTheme.colorScheme.error
+}
+
+@Composable
+internal fun VpnSwitchRow(title: String, caption: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
+    }
 }

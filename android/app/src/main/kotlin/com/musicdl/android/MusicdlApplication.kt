@@ -10,5 +10,7 @@ class MusicdlApplication : Application() {
         getSharedPreferences(MusicVpnService.PREFS, MODE_PRIVATE).edit()
             .putString(MusicVpnService.KEY_STATE, MusicVpnService.STATE_DISCONNECTED)
             .putString(MusicVpnService.KEY_MESSAGE, "").apply()
+        SubscriptionRefreshWorker.apply(this,
+            getSharedPreferences(MusicVpnService.PREFS, MODE_PRIVATE).getBoolean(MusicVpnService.KEY_AUTO_UPDATE, true))
     }
 }

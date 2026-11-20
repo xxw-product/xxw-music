@@ -561,7 +561,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 progressTotal = 0,
             )
         }
-        NowBarStatus.show(getApplication(), "XXW Music · поиск", "Ищу «$keyword»…")
 
         viewModelScope.launch {
             val sources = _state.value.activeSources
@@ -622,7 +621,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 if (flat.isNotEmpty()) _messages.tryEmit("Готово треков: ${flat.size}")
-                NowBarStatus.complete(getApplication(), "Поиск завершён · ${flat.size} треков")
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (err: Exception) {
@@ -633,7 +631,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         error = err.message ?: "Поиск не удался",
                     )
                 }
-                NowBarStatus.complete(getApplication(), "Поиск не удался")
             } finally {
                 // Closing the OkHttp pool touches sockets, so it must stay off the main thread.
                 withContext(Dispatchers.IO) { client.close() }
@@ -662,7 +659,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         if (waveJob?.isActive == true) return
         val epoch = ++waveEpoch
         _state.update { it.copy(isWaveLoading = true, error = null, progressText = "Волна: собираем профиль") }
-        NowBarStatus.show(getApplication(), "XXW Music · Моя волна", "Подбираем музыку…")
         waveJob = viewModelScope.launch {
             try {
                 // Treat the actual music library as taste evidence too. Previously downloaded
@@ -751,7 +747,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 // Loading always finishes; a stale job must not clear a newer one's flag.
                 if (epoch == waveEpoch) _state.update { it.copy(isWaveLoading = false) }
-                NowBarStatus.complete(getApplication(), "Моя волна завершена")
             }
         }
     }
@@ -858,8 +853,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val now = android.os.SystemClock.elapsedRealtime()
         val elapsed = (now - lastListeningTick).coerceIn(0, 1000)
         lastListeningTick = now
-        if (!player.isPlaying || listeningRecorded) return
+        if (!player.isPlaying) return
+        // Keep counting after the threshold: the real listened time decides full/half/skip when the track leaves.
         listenedMs += elapsed
+        if (listeningRecorded) return
         val song = _state.value.player.song ?: return
         val duration = player.duration.takeIf { it > 0 } ?: song.durationSeconds * 1000
         val threshold = if (duration > 0) minOf(30_000L, duration / 2) else 30_000L
@@ -1585,11 +1582,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         _state.update { it.copy(saves = it.saves + (key to SaveState.RUNNING)) }
-        NowBarStatus.show(
-            getApplication(),
-            "XXW Music · скачивание",
-            song.songName?.takeIf { it.isNotBlank() } ?: "Скачивание трека…",
-        )
 
         val job = viewModelScope.launch {
             val client = buildClient(setOf(song.source))
@@ -1691,20 +1683,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                     val stillDownloading = _state.value.saves.values.count { it == SaveState.RUNNING }
-                    if (stillDownloading > 0) {
-                        NowBarStatus.show(getApplication(), "XXW Music · скачивание", "Осталось активных: $stillDownloading")
-                    } else {
-                        NowBarStatus.complete(getApplication(), "Скачивание завершено")
-                    }
                     if (!automatic) _messages.tryEmit("Сохранено · ${DownloadStore.sizeLabel(extras)}")
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (err: Exception) {
                 _state.update { it.copy(saves = it.saves + (key to SaveState.FAILED)) }
-                if (_state.value.saves.values.none { it == SaveState.RUNNING }) {
-                    NowBarStatus.complete(getApplication(), "Скачивание завершилось с ошибкой")
-                }
                 _messages.tryEmit("Не удалось сохранить: ${err.message ?: "неизвестная ошибка"}")
             } finally {
                 automaticJobs.remove(key)

@@ -78,7 +78,9 @@ class WaveStore(context: Context) {
             when {
                 full -> signal.copy(plays = signal.plays + 1, repeats = signal.repeats + if (replay) 1 else 0,
                     lastPlayedAt = now, updatedAt = now)
-                half -> signal.copy(repeats = signal.repeats + if (replay) 1 else 0, lastPlayedAt = now, updatedAt = now)
+                // Half of a track is a listen (the same threshold scrobbling services use).
+                half -> signal.copy(plays = signal.plays + 1, repeats = signal.repeats + if (replay) 1 else 0,
+                    lastPlayedAt = now, updatedAt = now)
                 else -> signal.copy(shortListens = signal.shortListens + 1, lastPlayedAt = now, updatedAt = now)
             }
         }
@@ -119,7 +121,8 @@ class WaveStore(context: Context) {
 
     fun penalties(now: Long = System.currentTimeMillis()): Penalties = Wave.penalties(listening(), now)
 
-    fun totalPlays(): Int = listening().sumOf { it.plays }
+    /** Every evaluated listen counts, including quick skips: all of them shape the wave. */
+    fun totalPlays(): Int = listening().sumOf { it.plays + it.shortListens + it.skips }
 
     /**
      * Old evidence disappears gradually: signals whose decayed weight has fallen below a floor and

@@ -315,7 +315,7 @@ class MusicVpnService : VpnService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL_ID, "XXW Music VPN", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL_ID, "XXW Music VPN", NotificationManager.IMPORTANCE_MIN)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }

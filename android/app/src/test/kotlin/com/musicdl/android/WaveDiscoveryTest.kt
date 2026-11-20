@@ -50,3 +50,15 @@ class WaveDiscoveryTest {
         assertEquals("Fresh", ranked.first().singers)
     }
 }
+
+class WaveJunkTest {
+    private fun song(title: String, artist: String) =
+        SongInfo(source = "SoundCloudMusicClient", identifier = title, singers = artist, songName = title)
+
+    @Test fun `compilations and file names are junk, real tracks are not`() {
+        assertTrue(Wave.isJunk(song("Que Se Fod4 o Cupido", "Top Hits Do Momento / Sigam")))
+        assertTrue(Wave.isJunk(song("Top Hits 8(Dj Hornet).mp3", "saber_ms")))
+        assertFalse(Wave.isJunk(song("Холод", "shadowraze")))
+        assertFalse(Wave.isJunk(song("sweater weather", "The Neighbourhood")))
+    }
+}

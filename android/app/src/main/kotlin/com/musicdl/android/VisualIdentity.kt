@@ -699,12 +699,12 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 label = { Text("Ссылка на плейлист Яндекса") },
                 supportingText = { Text("Можно вставить всё сообщение со ссылкой") },
                 modifier = Modifier.fillMaxWidth(), enabled = !state.isImporting)
-            Button(onClick = { model.importPlaylistLink(serviceLink, download = true) },
+            Button(onClick = { model.importPlaylistLink(serviceLink, download = false) },
                 enabled = serviceLink.isNotBlank() && !state.isImporting,
                 modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Rounded.Download, null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (state.isImporting) "Переносим…" else "Перенести и скачать")
+                Text(if (state.isImporting) "Переносим…" else "Перенести")
             }
             Text("Создадим плейлист, найдём доступные файлы и поставим их на скачивание. Недоступные треки не скрываем в итоговом счёте.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

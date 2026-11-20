@@ -36,7 +36,7 @@ object Genres {
         ),
         Genre(
             "pop", "Поп", "pop hits",
-            listOf("pop", "поп", "хит", "hits"),
+            listOf("pop", "поп"),
         ),
         Genre(
             "metal", "Метал", "metal",
@@ -425,6 +425,7 @@ object Wave {
         globalCatalog: String = "QobuzMusicClient",
     ): Boolean {
         if (song.songName.isNullOrBlank() || song.singers.isNullOrBlank()) return false
+        if (isJunk(song)) return false
         if (isForeignCulture(song, profile)) return false
         val familiar = matchesAnyArtist(song.singers, knownArtists)
         if (!allowGlobalCatalog && song.source == globalCatalog && !familiar) return false
@@ -441,6 +442,22 @@ object Wave {
         if (inferGenres(song).any { it.id == genre.id }) return true
         val haystack = " " + normalize(listOfNotNull(song.genre, song.tags).joinToString(" ")) + " "
         return genre.keywords.any { haystack.contains(" " + normalize(it) + " ") }
+    }
+
+    private val JUNK_WORDS = listOf(
+        "top hits", "hits do momento", "playlist", "compilation", "various artists", "mix 20", "best of 20",
+        "nonstop", "non stop", "full album", "type beat", "free beat", "karaoke", "slowed reverb", "8d audio",
+    )
+    private val FILE_NAME = Regex("(?i)\\.(mp3|m4a|wav|flac|ogg|mp4)\\b")
+
+    /**
+     * Uploader compilations and file-name titles are what "pop hits" style queries drag in from
+     * open catalogs; they are never a recommendation.
+     */
+    fun isJunk(song: SongInfo): Boolean {
+        val text = " " + normalize(song.songName.orEmpty() + " " + song.singers.orEmpty()) + " "
+        return JUNK_WORDS.any { text.contains(" $it ") || text.contains(it) && it.length > 8 } ||
+            FILE_NAME.containsMatchIn(song.songName.orEmpty()) || normalize(song.singers.orEmpty()).startsWith("various")
     }
 
     /** Public normalization, so other components compare artists the same way the model does. */
@@ -508,7 +525,7 @@ object Wave {
     }
 
     /** Used when there is no taste data at all, and again if every personal stage came back empty. */
-    val baseSeeds: List<WaveSeed> = listOf("music mix", "lofi chill", "top hits", "instrumental")
+    val baseSeeds: List<WaveSeed> = listOf("new music", "lofi chill", "indie", "instrumental")
         .map { WaveSeed(WaveSeedKind.BASE, it) }
 
     /** Rotate through the entire taste profile over successive waves, with a bounded network budget. */
@@ -547,7 +564,7 @@ object Wave {
              penalties: Penalties = Penalties(), discovery: Map<String, Float> = emptyMap()): List<SongInfo> {
         val artistTaste = artists.entries.associate { normalize(it.key) to it.value }
         val listening = history.associateBy { recordingKey(it.song) }
-        val candidates = results.filter { !it.songName.isNullOrBlank() && !it.singers.isNullOrBlank() }
+        val candidates = results.filter { !it.songName.isNullOrBlank() && !it.singers.isNullOrBlank() && !isJunk(it) }
             .distinctBy(::recordingKey).mapNotNull { song ->
                 val genres = inferGenres(song)
                 val signal = listening[recordingKey(song)]

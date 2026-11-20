@@ -111,14 +111,23 @@ class WaveEngine(
                 }
             }
             if (discoverySeeds.isNotEmpty()) notes += "Похожих исполнителей: ${discoverySeeds.size}"
-            val genreSeeds = Wave.genreSeeds(profile, generation).take(if (fast) 2 else 8)
+            // With known favourites the artist stages carry the wave; one genre seed only adds variety.
+            val genreSeeds = Wave.genreSeeds(profile, generation).take(if (!fast) 8 else if (favorites.isNotEmpty()) 1 else 3)
             val budget = if (fast) 7_000L else stageBudgetMs
             val discoveryKeys = discovery.keys
+            val favoriteKeys = knownArtists.map(Wave::key).toSet()
+            // Early exit only on candidates that actually fit the taste (a favourite or a related
+            // artist); a flood of generic genre hits must never end the search before artists answer.
             val enough: () -> Boolean = {
-                fast && unique().size >= limit * 3 && (
-                    discoverySeeds.isEmpty() || System.currentTimeMillis() - startedAt > 4_500L ||
-                        unique().count { song -> Wave.artistNames(song.singers).any { Wave.key(it) in discoveryKeys } } >= limit
-                    )
+                fast && run {
+                    val all = unique()
+                    val fitting = all.count { song ->
+                        Wave.artistNames(song.singers).any { Wave.key(it) in discoveryKeys || Wave.key(it) in favoriteKeys }
+                    }
+                    val waited = System.currentTimeMillis() - startedAt
+                    if (favorites.isEmpty()) all.size >= limit * 3
+                    else fitting >= limit * 2 || (waited > 5_000L && all.size >= limit * 3)
+                }
             }
             report("Волна: ищем исполнителей и жанры")
             coroutineScope {

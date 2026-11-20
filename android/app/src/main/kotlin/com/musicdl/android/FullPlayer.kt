@@ -10,6 +10,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -86,7 +92,7 @@ internal fun FullPlayer(
     // Material 3 Expressive: a full tonal scheme grown from the cover colour; default keeps the blurred-cover look.
     val expressive = Appearance.playerTheme == PlayerTheme.EXPRESSIVE
     val scheme = remember(palette.seed) { expressiveScheme(palette.seed) }
-    val background by animateColorAsState(if (expressive) scheme.surface else palette.background, tween(420), label = "playerBackground")
+    val background by animateColorAsState(palette.background, tween(420), label = "playerBackground")
     val PlayerAccent = if (expressive) scheme.primary else palette.accent
     val motionEnabled = remember(context) {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
@@ -118,10 +124,7 @@ internal fun FullPlayer(
         Box(Modifier.fillMaxSize()) {
             val canvas = state.player.canvas
             var canvasFailed by remember(canvas?.url) { mutableStateOf(false) }
-            if (expressive) {
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                    0f to scheme.primaryContainer.copy(alpha = 0.7f), 0.55f to scheme.surfaceContainer, 1f to scheme.surface)))
-            } else if (canvas != null && !canvasFailed) {
+            if (canvas != null && !canvasFailed) {
                 Box(Modifier.fillMaxSize()) {
                     ClipVideo(canvas, onError = { canvasFailed = true }, modifier = Modifier.fillMaxSize())
                     // Canvas is decoration: a dark scrim keeps the title and controls readable.
@@ -209,29 +212,43 @@ internal fun FullPlayer(
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(song.songName ?: "Без названия", style = MaterialTheme.typography.headlineSmall,
+                        Text(song.songName ?: "Без названия",
+                            style = if (expressive) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(song.singers.orEmpty(), color = PlayerMuted, style = MaterialTheme.typography.titleMedium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    IconButton(onClick = onDislike) { Icon(Icons.Rounded.ThumbDown, "Реже", Modifier.size(22.dp), tint = PlayerMuted) }
+                    if (!expressive) IconButton(onClick = onDislike) { Icon(Icons.Rounded.ThumbDown, "Реже", Modifier.size(22.dp), tint = PlayerMuted) }
                     IconButton(onClick = onLike) {
                         Icon(
                             if (song.key() in state.likedKeys) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            "Нравится", Modifier.size(28.dp), tint = PlayerAccent,
+                            "Нравится", Modifier.size(if (expressive) 32.dp else 28.dp), tint = PlayerAccent,
                         )
                     }
                 }
-                PlayerSeek(state, playbackProgress, onSeek, PlayerAccent)
+                PlayerSeek(state, playbackProgress, onSeek, PlayerAccent, expressive)
                 Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically) {
                     IconToggleButton(checked = state.shuffle, onCheckedChange = { onShuffle() }) {
                         Icon(Icons.Rounded.Shuffle, "Перемешать", tint = if (state.shuffle) PlayerAccent else PlayerMuted)
                     }
-                    TransportButton(direction = -1, tint = PlayerAccent, onClick = onPrevious)
-                    TransportButton(playing = state.player.isPlaying, buffering = state.player.isBuffering,
-                        prominent = true, tint = PlayerAccent, onClick = onPlayPause)
-                    TransportButton(direction = 1, tint = PlayerAccent, onClick = onNext)
+                    if (expressive) {
+                        ExpressiveKey(Icons.Rounded.SkipPrevious, "Предыдущий", scheme.primaryContainer, scheme.onPrimaryContainer,
+                            Modifier.size(64.dp), CircleShape, onPrevious)
+                        ExpressiveKey(
+                            if (state.player.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (state.player.isPlaying) "Пауза" else "Воспроизвести", scheme.primary, scheme.onPrimary,
+                            Modifier.size(width = 128.dp, height = 92.dp), RoundedCornerShape(36.dp), onPlayPause,
+                            buffering = state.player.isBuffering, iconSize = 38.dp,
+                        )
+                        ExpressiveKey(Icons.Rounded.SkipNext, "Следующий", scheme.primaryContainer, scheme.onPrimaryContainer,
+                            Modifier.size(64.dp), CircleShape, onNext)
+                    } else {
+                        TransportButton(direction = -1, tint = PlayerAccent, onClick = onPrevious)
+                        TransportButton(playing = state.player.isPlaying, buffering = state.player.isBuffering,
+                            prominent = true, tint = PlayerAccent, onClick = onPlayPause)
+                        TransportButton(direction = 1, tint = PlayerAccent, onClick = onNext)
+                    }
                     IconToggleButton(checked = state.repeatOne, onCheckedChange = { onRepeat() }) {
                         Icon(if (state.repeatOne) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Повтор трека",
                             tint = if (state.repeatOne) PlayerAccent else PlayerMuted)
@@ -335,11 +352,14 @@ private fun Modifier.blurBackdrop(): Modifier =
 private const val BACKDROP_PIXELS = 32
 
 @Composable
-private fun PlayerSeek(state: MusicUiState, progress: Float, onSeek: (Float) -> Unit, PlayerAccent: Color) {
+private fun PlayerSeek(state: MusicUiState, progress: Float, onSeek: (Float) -> Unit, PlayerAccent: Color, expressive: Boolean = false) {
     var seeking by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(state.player.song?.key()) { seeking = null }
     Column {
-        VinylSeekBar(value = seeking ?: progress, onChange = { seeking = it },
+        if (expressive) ExpressiveSeekBar(value = seeking ?: progress, onChange = { seeking = it },
+            onCommit = { value -> onSeek(value); seeking = null }, enabled = state.player.durationMs > 0,
+            accent = PlayerAccent)
+        else VinylSeekBar(value = seeking ?: progress, onChange = { seeking = it },
             onCommit = { seeking?.let(onSeek); seeking = null }, enabled = state.player.durationMs > 0,
             tint = PlayerAccent)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

@@ -57,137 +57,77 @@ class WaveEngine(
     // No hard ten-track wall: the wave grows until the catalogs stop answering or the budget ends.
     private val targetSize = 150
 
+    /**
+     * The wave plays what the listener already owns or likes, plus more by the same artists:
+     *  1. the personal pool: liked, saved, downloaded and well-listened tracks (no network, instant);
+     *  2. other tracks by the favourite artists, found by an exact artist search.
+     * It never goes looking for unknown artists, genres or generic "hits" queries: when the catalogs
+     * are silent the wave simply plays from the personal pool.
+     */
     suspend fun build(
         profile: TasteProfile,
         generation: Int,
         recent: Set<String>,
         fast: Boolean = false,
         limit: Int = targetSize,
+        owned: List<SongInfo> = emptyList(),
     ): WaveBuild {
         val notes = mutableListOf<String>()
-        val startedAt = System.currentTimeMillis()
-        // Fallback stages only start while there is time left; the caller's hard budget is larger.
-        fun hasTime() = System.currentTimeMillis() - startedAt < 24_000L
-        val client = MusicClient(
-            musicSources = sources.toList().ifEmpty { MusicClient.DEFAULT_MUSIC_SOURCES },
-            baseConfig = config,
-        )
-        try {
-            val collected = java.util.Collections.synchronizedList(ArrayList<SongInfo>())
-            val knownArtists = profile.artists.keys.toList()
-
-            fun addAll(song: SongInfo) {
-                synchronized(collected) {
-                    if (collected.none { Wave.recordingKey(it) == Wave.recordingKey(song) }) collected.add(song)
-                }
-            }
-
-            fun unique(): List<SongInfo> = synchronized(collected) { collected.toList() }
-
-            val known = profile.artists.isNotEmpty() || profile.history.isNotEmpty() ||
-                profile.genres.values.any { it > Genres.DEFAULT_WEIGHT + 0.01f }
-
-            if (!known) {
-                report("Волна: мало данных — берём музыкальную основу")
-                searchStage(client, Wave.baseSeeds.take(3), profile, knownArtists,
-                    allowGlobalCatalog = false, notes = notes, sink = ::addAll)
-            }
-
-            // Artist and genre stages run side by side: sequential stages used to add their
-            // timeouts together, and the genre stage only ran when artists gave almost nothing.
-            // Fast mode serves the first handful of tracks (and every top-up): few seeds, no
-            // enrichment, and the search stops listening as soon as there are enough candidates.
-            // Taste = favourites (exact artists) + discovery (artists related to the favourites).
-            val favorites = Wave.favoriteArtists(profile, generation, if (fast) 3 else 6)
-            val related = relatedArtists(Wave.favoriteArtists(profile, generation + 1, 5))
-            val discovery = Wave.discovery(related, profile)
-            val discoverySeeds = Wave.discoverySeeds(related, discovery, generation, if (fast) 5 else 10)
-            val favoriteSeeds = favorites.map { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }
-            // Interleaved so an early exit still has both kinds in hand.
-            val artistSeeds = buildList {
-                for (i in 0 until maxOf(favoriteSeeds.size, discoverySeeds.size)) {
-                    favoriteSeeds.getOrNull(i)?.let(::add)
-                    discoverySeeds.getOrNull(i)?.let(::add)
-                }
-            }
-            if (discoverySeeds.isNotEmpty()) notes += "Похожих исполнителей: ${discoverySeeds.size}"
-            // With known favourites the artist stages carry the wave; one genre seed only adds variety.
-            val genreSeeds = Wave.genreSeeds(profile, generation).take(if (!fast) 8 else if (favorites.isNotEmpty()) 1 else 3)
-            val budget = if (fast) 7_000L else stageBudgetMs
-            val discoveryKeys = discovery.keys
-            val favoriteKeys = knownArtists.map(Wave::key).toSet()
-            // Early exit only on candidates that actually fit the taste (a favourite or a related
-            // artist); a flood of generic genre hits must never end the search before artists answer.
-            val enough: () -> Boolean = {
-                fast && run {
-                    val all = unique()
-                    val fitting = all.count { song ->
-                        Wave.artistNames(song.singers).any { Wave.key(it) in discoveryKeys || Wave.key(it) in favoriteKeys }
-                    }
-                    val waited = System.currentTimeMillis() - startedAt
-                    if (favorites.isEmpty()) all.size >= limit * 3
-                    else fitting >= limit * 2 || (waited > 5_000L && all.size >= limit * 3)
-                }
-            }
-            report("Волна: ищем исполнителей и жанры")
-            coroutineScope {
-                if (artistSeeds.isNotEmpty()) launch {
-                    // An exact artist search is the one place the wide catalog is genuinely useful.
-                    searchStage(client, artistSeeds, profile, knownArtists,
-                        allowGlobalCatalog = true, notes = notes, sink = ::addAll, budget = budget, enough = enough)
-                }
-                if (genreSeeds.isNotEmpty()) launch {
-                    searchStage(client, genreSeeds, profile, knownArtists,
-                        allowGlobalCatalog = false, notes = notes, sink = ::addAll, budget = budget, enough = enough)
-                }
-            }
-
-            if (unique().size < 10 && hasTime()) {
-                report("Волна: запасной подбор")
-                searchStage(client, Wave.baseSeeds.take(3), profile, knownArtists,
-                    allowGlobalCatalog = false, notes = notes, sink = ::addAll)
-            }
-
-            // The very last network attempt: any source, any non-foreign recording. It runs only if
-            // the strict stages found almost nothing, so it cannot pollute a normal wave.
-            if (unique().size < 6 && hasTime()) {
-                report("Волна: широкий подбор")
-                searchStage(client, Wave.baseSeeds.take(2), profile, knownArtists,
-                    allowGlobalCatalog = true, notes = notes, sink = ::addAll, relaxed = true)
-            }
-
-            val candidates = unique()
-            if (candidates.isEmpty()) {
-                throw WaveUnavailable("Источники не ответили (${synchronized(notes) { notes.joinToString("; ") }}). Если включён VPN, попробуйте другой сервер.")
-            }
-
-            report("Волна: уточняем жанры · ${candidates.size}")
-            val enriched = (if (fast) candidates else enrichCandidates(candidates.take(200)))
-                // Enrichment may add catalog genres; a record that turned out to be foreign is not
-                // a recommendation, so the filter runs again before ranking.
-                .filterNot { Wave.isForeignCulture(it, profile) }
-            val ranked = Wave.rank(
-                results = enriched,
-                coefficients = profile.genres,
-                artists = profile.artists,
-                history = profile.history,
-                recent = recent,
-                penalties = profile.penalties,
-                discovery = discovery,
-            )
-            // Random fallback: if ranking rejected everything, a playable assortment still beats an
-            // empty wave. Order is shuffled so consecutive tries differ.
-            val playable = ranked.ifEmpty {
-                enriched.shuffled().take(limit).also {
-                    notes += "Ранжирование пустое — включён случайный подбор"
-                }
-            }.take(limit)
-            if (playable.isEmpty()) throw WaveUnavailable("Не удалось подобрать ни одного трека. Попробуйте ещё раз.")
-            return WaveBuild(playable, notes)
-        } finally {
-            // Closing may wait on sockets stuck in the network; never let that delay the result.
-            CoroutineScope(Dispatchers.IO).launch { runCatching { client.close() } }
+        val favorites = Wave.favoriteArtists(profile, generation, if (fast) 5 else 8)
+        val personal = personalPool(owned, profile, recent, generation)
+        if (favorites.isEmpty() && personal.isEmpty()) {
+            throw WaveUnavailable("Волне пока не на что опереться: поставьте лайки трекам или добавьте музыку в библиотеку.")
         }
+        val found = java.util.Collections.synchronizedList(ArrayList<SongInfo>())
+        if (favorites.isNotEmpty()) {
+            val client = MusicClient(
+                musicSources = sources.toList().ifEmpty { MusicClient.DEFAULT_MUSIC_SOURCES },
+                baseConfig = config,
+            )
+            try {
+                report("Волна: ищем ещё у ваших исполнителей")
+                val knownArtists = profile.artists.keys.toList()
+                searchStage(
+                    client, favorites.map { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }, profile, knownArtists,
+                    allowGlobalCatalog = true, notes = notes,
+                    sink = { song ->
+                        if (Wave.recordingKey(song) !in recent) synchronized(found) {
+                            if (found.none { Wave.recordingKey(it) == Wave.recordingKey(song) }) found.add(song)
+                        }
+                    },
+                    budget = if (fast) 6_000L else stageBudgetMs,
+                    enough = { fast && found.size >= limit * 2 },
+                )
+            } finally {
+                // Closing may wait on sockets stuck in the network; never let that delay the result.
+                CoroutineScope(Dispatchers.IO).launch { runCatching { client.close() } }
+            }
+        }
+        val candidates = (found.toList() + personal).distinctBy { Wave.recordingKey(it) }
+            .filterNot { Wave.isForeignCulture(it, profile) }
+        notes += "Своих: ${personal.size}, у любимых исполнителей: ${found.size}"
+        val ranked = Wave.rank(
+            results = candidates,
+            coefficients = profile.genres,
+            artists = profile.artists,
+            history = profile.history,
+            recent = recent,
+            penalties = profile.penalties,
+        )
+        val playable = ranked.ifEmpty { candidates.shuffled() }.take(limit)
+        if (playable.isEmpty()) throw WaveUnavailable("Не удалось подобрать ни одного трека. Попробуйте ещё раз.")
+        return WaveBuild(playable, notes)
+    }
+
+    /** Tracks the listener owns or approved, minus anything rejected; fresh ones first, sampled for variety. */
+    private fun personalPool(owned: List<SongInfo>, profile: TasteProfile, recent: Set<String>, generation: Int): List<SongInfo> {
+        val usable = owned.filter { song ->
+            !song.songName.isNullOrBlank() && !song.singers.isNullOrBlank() && !Wave.isJunk(song) &&
+                Wave.artistNames(song.singers).none { (profile.penalties.artists[Wave.key(it)] ?: 0f) >= 3f }
+        }.distinctBy { Wave.recordingKey(it) }
+        val fresh = usable.filter { Wave.recordingKey(it) !in recent }
+        val pool = fresh.ifEmpty { usable }
+        return pool.shuffled(java.util.Random(generation * 7919L + pool.size)).take(120)
     }
 
     /**

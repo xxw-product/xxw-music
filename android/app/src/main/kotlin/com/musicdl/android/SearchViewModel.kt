@@ -697,7 +697,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 // clock and does not wait for a provider stuck in a blocking socket. Loading can
                 // therefore never outlive WAVE_BUDGET_MS, whatever the network does.
                 val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-                val buildJob = buildScope.async { engine.build(profile, waveStore.generation, recent, fast = true, limit = 6) }
+                val buildJob = buildScope.async { engine.build(profile, waveStore.generation, recent, fast = true, limit = 6, owned = seeds) }
                 val build = try {
                     withTimeoutOrNull(FIRST_BATCH_BUDGET_MS) { buildJob.await() }
                 } finally {
@@ -773,7 +773,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         return withContext(Dispatchers.Default) {
             val tasteTracks = (likesSnapshot + saved + libraryTracks).distinctBy { it.key() }
             val listening = waveStore.listening()
-            val seeds = (tasteTracks + listening.map { it.song }).distinctBy { it.key() }
+            // Listened tracks join the pool only when they were actually enjoyed.
+            val enjoyed = listening.filter { it.plays > 0 && it.dislikes == 0 && it.skips <= it.plays }.map { it.song }
+            val seeds = (tasteTracks + enjoyed).distinctBy { it.key() }
             val profile = Wave.profile(
                 _state.value.coefficients,
                 likesSnapshot,
@@ -801,13 +803,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 if (current != null && Wave.recordingKey(current) !in waveKeys) return@launch
                 if (playbackQueue.size - playbackQueue.index - 1 >= 6) { delay(2_000L); continue }
                 // Never repeat anything already queued or played in this session, however long it runs.
-                val seen = waveKeys + playbackQueue.items.map(Wave::recordingKey) + playbackQueue.historyItems.map(Wave::recordingKey)
-                val freshProfile = runCatching { computeTaste().second }.getOrDefault(profile)
+                // Only the recent stretch counts, so a small library can come around again after a while.
+                val seen = (_state.value.wave.map(Wave::recordingKey) + playbackQueue.items.map(Wave::recordingKey) +
+                    playbackQueue.historyItems.map(Wave::recordingKey)).takeLast(150).toSet()
+                val (freshSeeds, freshProfile) = runCatching { computeTaste() }.getOrNull() ?: (emptyList<SongInfo>() to profile)
                 val build = runCatching {
                     withTimeoutOrNull(30_000L) {
                         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
                         try {
-                            scope.async { engine().build(freshProfile, waveStore.generation, seen, fast = true, limit = 10) }.await()
+                            scope.async { engine().build(freshProfile, waveStore.generation, seen, fast = true, limit = 10, owned = freshSeeds) }.await()
                         } finally { scope.cancel() }
                     }
                 }.getOrNull()

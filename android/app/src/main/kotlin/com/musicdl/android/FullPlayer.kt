@@ -18,6 +18,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -481,33 +483,65 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
             Text(state.lyricsError ?: "Текст пока не найден", textAlign = TextAlign.Center, color = PlayerMuted)
         }
         lyrics.hasTimings -> BoxWithConstraints(modifier) {
+            val animated = Appearance.lyricsAnimated
             val active = lyrics.lines.indexOfLast { it.timeMs <= state.player.positionMs }
             val listState = rememberLazyListState()
-            val padding = (maxHeight / 2 - 44.dp).coerceAtLeast(0.dp)
-            LaunchedEffect(active, lyrics, maxHeight, size) {
+            // Animated mode keeps the active line near the top, like the reference; plain mode centres it.
+            val anchor = if (animated) 0.28f else 0.5f
+            val topPadding = if (animated) (maxHeight * anchor - 30.dp).coerceAtLeast(0.dp) else (maxHeight / 2 - 44.dp).coerceAtLeast(0.dp)
+            val bottomPadding = if (animated) maxHeight * 0.6f else topPadding
+            LaunchedEffect(active, lyrics, maxHeight, size, animated) {
                 if (active >= 0) {
                     if (listState.layoutInfo.visibleItemsInfo.none { it.index == active }) listState.scrollToItem(active)
                     val layout = listState.layoutInfo
                     layout.visibleItemsInfo.firstOrNull { it.index == active }?.let { row ->
-                        val center = (layout.viewportStartOffset + layout.viewportEndOffset) / 2f
-                        listState.animateScrollBy(row.offset + row.size / 2f - center)
+                        val target = layout.viewportStartOffset + (layout.viewportEndOffset - layout.viewportStartOffset) * anchor
+                        val delta = row.offset + row.size / 2f - target
+                        if (animated) listState.animateScrollBy(delta, tween(520)) else listState.scrollBy(delta)
                     }
                 }
             }
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = padding), horizontalAlignment = Alignment.CenterHorizontally) {
+                contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
+                horizontalAlignment = if (animated) Alignment.Start else Alignment.CenterHorizontally) {
                 itemsIndexed(lyrics.lines) { index, line ->
                     val distance = abs(index - active)
-                    val scale by animateFloatAsState(if (distance == 0) 1f else (0.86f - distance * 0.06f).coerceAtLeast(0.65f), label = "lineScale")
-                    val alpha by animateFloatAsState(if (distance == 0) 1f else (opacity / distance.coerceAtLeast(1)).coerceAtLeast(0.08f), label = "lineOpacity")
-                    Box(Modifier.fillMaxWidth().heightIn(min = 88.dp).clickable(enabled = state.player.durationMs > 0) {
-                        onSeek((line.timeMs.toFloat() / state.player.durationMs).coerceIn(0f, 1f))
-                    }.padding(vertical = 10.dp).graphicsLayer {
-                        scaleX = scale; scaleY = scale; this.alpha = alpha
-                    }, contentAlignment = Alignment.Center) {
-                        Text(line.text, fontSize = size.sp, lineHeight = (size * 1.25f).sp, textAlign = TextAlign.Center,
-                            fontWeight = if (index == active) FontWeight.Bold else FontWeight.Medium,
-                            color = if (index == active) PlayerInk else PlayerMuted)
+                    val onClickLine = { onSeek((line.timeMs.toFloat() / state.player.durationMs).coerceIn(0f, 1f)) }
+                    if (animated) {
+                        val scale by animateFloatAsState(if (distance == 0) 1f else 0.94f, tween(350), label = "lineScale")
+                        val alpha by animateFloatAsState(if (distance == 0) 1f else (0.5f - distance * 0.06f).coerceAtLeast(0.18f), tween(350), label = "lineOpacity")
+                        val blurRadius by androidx.compose.animation.core.animateDpAsState(
+                            if (distance == 0 || active < 0) 0.dp else (distance * 1.6f).coerceAtMost(6f).dp, tween(350), label = "lineBlur")
+                        val next = lyrics.lines.getOrNull(index + 1)?.timeMs ?: state.player.durationMs
+                        val lineDuration = minOf(next - line.timeMs, maxOf(1500L, line.text.length * 90L)).coerceAtLeast(500L)
+                        val fill = if (distance == 0) ((state.player.positionMs - line.timeMs).toFloat() / lineDuration).coerceIn(0f, 1f) else 0f
+                        val fillSmooth by animateFloatAsState(fill, tween(220), label = "lineFill")
+                        Box(Modifier.fillMaxWidth().clickable(enabled = state.player.durationMs > 0, onClick = onClickLine)
+                            .padding(vertical = 12.dp, horizontal = 4.dp)
+                            .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha; transformOrigin = TransformOrigin(0f, 0.5f) }
+                            .let { if (android.os.Build.VERSION.SDK_INT >= 31) it.blur(blurRadius, BlurredEdgeTreatment.Unbounded) else it },
+                        ) {
+                            val done = PlayerInk
+                            val pending = PlayerInk.copy(alpha = 0.55f)
+                            val soft = 3f
+                            val reach = fillSmooth * (line.text.length + soft)
+                            val styled = androidx.compose.ui.text.buildAnnotatedString {
+                                line.text.forEachIndexed { i, ch ->
+                                    val t = if (distance == 0) ((reach - i) / soft).coerceIn(0f, 1f) else 0f
+                                    withStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.lerp(pending, done, t))) { append(ch) }
+                                }
+                            }
+                            Text(styled, fontSize = (size * 0.92f).sp, lineHeight = (size * 1.2f).sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Box(Modifier.fillMaxWidth().heightIn(min = 88.dp).clickable(enabled = state.player.durationMs > 0, onClick = onClickLine)
+                            .padding(vertical = 10.dp).graphicsLayer {
+                                this.alpha = if (distance == 0) 1f else (opacity / distance.coerceAtLeast(1)).coerceAtLeast(0.08f)
+                            }, contentAlignment = Alignment.Center) {
+                            Text(line.text, fontSize = size.sp, lineHeight = (size * 1.25f).sp, textAlign = TextAlign.Center,
+                                fontWeight = if (index == active) FontWeight.Bold else FontWeight.Medium,
+                                color = if (index == active) PlayerInk else PlayerMuted)
+                        }
                     }
                 }
             }

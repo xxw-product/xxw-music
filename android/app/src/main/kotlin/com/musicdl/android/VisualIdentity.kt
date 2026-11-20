@@ -714,6 +714,16 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                     }
                 }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Анимация текста песни", style = MaterialTheme.typography.titleSmall)
+                    Text("Заливка строки и размытие соседних. Выключено — обычные строки.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(Appearance.lyricsAnimated, onCheckedChange = { Appearance.setLyricsAnimated(appearanceContext, it) },
+                    colors = vinylSwitchColors())
+            }
         }
 
         SettingsGroup("Перенос музыки") {

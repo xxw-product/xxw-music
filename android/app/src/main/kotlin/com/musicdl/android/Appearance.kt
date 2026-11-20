@@ -41,6 +41,15 @@ object Appearance {
     var playerTheme by mutableStateOf(PlayerTheme.DEFAULT)
         private set
 
+    /** Word-by-word fill and blurred neighbours in the lyrics carousel; off gives plain static lines. */
+    var lyricsAnimated by mutableStateOf(true)
+        private set
+
+    fun setLyricsAnimated(context: Context, on: Boolean) {
+        lyricsAnimated = on
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("lyrics_anim", on).apply()
+    }
+
     val dynamicAvailable: Boolean get() = Build.VERSION.SDK_INT >= 31
 
     /** Foreground accent used across the app (formerly a fixed silver). */
@@ -55,6 +64,7 @@ object Appearance {
         if (dynamicAvailable) dynamicPrimary = runCatching { dynamicDarkColorScheme(context).primary }.getOrNull()
         val saved = prefs.getString("accent", "silver").orEmpty()
         accentId = if (saved == DYNAMIC && dynamicAvailable || accents.any { it.id == saved }) saved else "silver"
+        lyricsAnimated = prefs.getBoolean("lyrics_anim", true)
         playerTheme = runCatching { PlayerTheme.valueOf(prefs.getString("player", "DEFAULT").orEmpty()) }
             .getOrDefault(PlayerTheme.DEFAULT)
     }

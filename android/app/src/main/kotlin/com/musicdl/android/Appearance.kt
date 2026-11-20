@@ -10,7 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
-enum class PlayerTheme { DEFAULT, EXPRESSIVE }
+enum class PlayerTheme(val branded: Boolean = false) { DEFAULT, EXPRESSIVE, YANDEX(true), SPOTIFY(true), APPLE(true) }
 
 /** One selectable theme colour; [hue] null means the original monochrome silver. */
 data class AccentOption(val id: String, val label: String, val hue: Float?)

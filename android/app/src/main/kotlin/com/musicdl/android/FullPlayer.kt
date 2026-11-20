@@ -56,8 +56,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
 
-private val PlayerInk = Color(0xFFF4F4F2)
-private val PlayerMuted = Color(0xFFB9BDC4)
+internal val PlayerInk = Color(0xFFF4F4F2)
+internal val PlayerMuted = Color(0xFFB9BDC4)
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -93,7 +93,27 @@ internal fun FullPlayer(
     val expressive = Appearance.playerTheme == PlayerTheme.EXPRESSIVE
     val scheme = remember(palette.seed) { expressiveScheme(palette.seed) }
     val background by animateColorAsState(palette.background, tween(420), label = "playerBackground")
-    val PlayerAccent = if (expressive) scheme.primary else palette.accent
+    val theme = Appearance.playerTheme
+    val branded = theme.branded
+    val PlayerAccent = when {
+        expressive -> scheme.primary
+        theme == PlayerTheme.YANDEX -> YandexYellow
+        theme == PlayerTheme.SPOTIFY -> SpotifyGreen
+        theme == PlayerTheme.APPLE -> Color.White
+        else -> palette.accent
+    }
+    val surfaceColor = when (theme) {
+        PlayerTheme.YANDEX -> YandexBg
+        PlayerTheme.SPOTIFY -> SpotifyBg
+        PlayerTheme.APPLE -> Color.Black
+        else -> background
+    }
+    val coverRadius = when (theme) {
+        PlayerTheme.EXPRESSIVE -> 40.dp
+        PlayerTheme.YANDEX -> 20.dp
+        PlayerTheme.SPOTIFY -> 6.dp
+        else -> 12.dp
+    }
     val motionEnabled = remember(context) {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
     }
@@ -112,19 +132,28 @@ internal fun FullPlayer(
         playing = state.player.isPlaying && drag == null && progress >= 0.999f,
         enabled = motionEnabled,
     )
-    LaunchedEffect(lyricsMode, song.key()) { if (lyricsMode) onLoadLyrics() }
+    LaunchedEffect(lyricsMode, song.key(), theme) { if (lyricsMode || theme == PlayerTheme.SPOTIFY) onLoadLyrics() }
     BackHandler(lyricsMode) { lyricsMode = false }
 
+    val hooks = PlayerHooks(
+        state = state, progress = playbackProgress, title = song.songName ?: "Без названия", artist = song.singers.orEmpty(),
+        subtitle = if (state.queueCount > 0) "Трек ${state.queuePosition.coerceAtLeast(1)} из ${state.queueCount}" else sourceName(song.source),
+        songKey = song.key(), liked = song.key() in state.likedKeys, lyricsMode = lyricsMode, seed = palette.seed,
+        onClose = onClose, onPlayPause = onPlayPause, onNext = onNext, onPrevious = onPrevious, onSeek = onSeek,
+        onLike = onLike, onDislike = onDislike, onShuffle = onShuffle, onRepeat = onRepeat, onSpeed = onSpeed,
+        onAddToPlaylist = onAddToPlaylist, onOpenQueue = onOpenQueue, onOpenActions = onOpenActions,
+        onToggleLyrics = { lyricsMode = !lyricsMode },
+    )
     androidx.compose.material3.MaterialExpressiveTheme(
         colorScheme = if (expressive) scheme else MaterialTheme.colorScheme,
         motionScheme = androidx.compose.material3.MotionScheme.expressive(),
         shapes = MaterialTheme.shapes,
     ) {
-    Surface(Modifier.fillMaxSize(), color = background, contentColor = PlayerInk) {
+    Surface(Modifier.fillMaxSize(), color = surfaceColor, contentColor = PlayerInk) {
         Box(Modifier.fillMaxSize()) {
             val canvas = state.player.canvas
             var canvasFailed by remember(canvas?.url) { mutableStateOf(false) }
-            if (canvas != null && !canvasFailed) {
+            if (canvas != null && !canvasFailed && !branded) {
                 Box(Modifier.fillMaxSize()) {
                     ClipVideo(canvas, onError = { canvasFailed = true }, modifier = Modifier.fillMaxSize())
                     // Canvas is decoration: a dark scrim keeps the title and controls readable.
@@ -138,11 +167,14 @@ internal fun FullPlayer(
                         ),
                     )
                 }
-            } else {
-                PlayerBackdrop(bitmap, palette)
+            } else when (theme) {
+                PlayerTheme.YANDEX -> Unit
+                PlayerTheme.SPOTIFY -> SpotifyBackdrop(palette.seed)
+                PlayerTheme.APPLE -> AppleBackdrop(bitmap, progress) { PlayerBackdrop(bitmap, palette) }
+                else -> PlayerBackdrop(bitmap, palette)
             }
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 8.dp)) {
-                Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (branded) ThemedHeader(theme, hooks) else Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Свернуть плеер", Modifier.size(32.dp)) }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Сейчас звучит", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -179,7 +211,7 @@ internal fun FullPlayer(
                                 Modifier.fillMaxSize().padding(top = side / 4 + 20.dp).graphicsLayer { alpha = progress },
                                 onSeek, PlayerAccent)
                         }
-                        Box(
+                        if (theme != PlayerTheme.APPLE) Box(
                             Modifier.size(side).align(Alignment.TopCenter).graphicsLayer {
                                 val flight = kotlin.math.sin(progress.coerceIn(0f, 1f) * Math.PI).toFloat()
                                 cameraDistance = 18f * density
@@ -195,7 +227,7 @@ internal fun FullPlayer(
                                     lyricsMode = !lyricsMode
                                     true
                                 }
-                            }.clip(RoundedCornerShape(if (expressive) 40.dp else 12.dp)).background(Color.Black.copy(alpha = 0.35f)),
+                            }.clip(RoundedCornerShape(coverRadius)).background(Color.Black.copy(alpha = 0.35f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             CoverImage(cover, Modifier.fillMaxSize()) {
@@ -203,13 +235,16 @@ internal fun FullPlayer(
                             }
                         }
                     }
-                    Box(Modifier.fillMaxWidth().height(28.dp), contentAlignment = Alignment.Center) {
-                        if (!lyricsMode && drag == null) {
+                    Box(Modifier.fillMaxWidth().height(if (theme == PlayerTheme.SPOTIFY) 64.dp else 28.dp), contentAlignment = Alignment.Center) {
+                        if (theme == PlayerTheme.SPOTIFY) {
+                            if (!lyricsMode) SpotifyLyricLine(state, Modifier.fillMaxSize())
+                        } else if (!lyricsMode && drag == null && theme != PlayerTheme.APPLE) {
                             Text("Смахните обложку влево — текст песни", color = PlayerMuted,
                                 style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
+                if (branded) ThemedBody(theme, hooks) else {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(song.songName ?: "Без названия",
@@ -272,6 +307,7 @@ internal fun FullPlayer(
                         IconButton(onClick = onAddToPlaylist) { Icon(Icons.Rounded.PlaylistAdd, "В плейлист") }
                         IconButton(onClick = { settings = true }) { Icon(Icons.Rounded.Tune, "Вид текста") }
                     }
+                }
                 }
             }
         }
@@ -430,7 +466,7 @@ private fun PlayerSeek(state: MusicUiState, progress: Float, onSeek: (Float) -> 
     }
 }
 
-private fun playerTime(ms: Long): String =
+internal fun playerTime(ms: Long): String =
     "${ms.coerceAtLeast(0) / 60000}:${(ms.coerceAtLeast(0) / 1000 % 60).toString().padStart(2, '0')}"
 
 @Composable

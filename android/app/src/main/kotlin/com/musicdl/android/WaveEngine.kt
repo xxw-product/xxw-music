@@ -73,7 +73,7 @@ class WaveEngine(
         owned: List<SongInfo> = emptyList(),
     ): WaveBuild {
         val notes = mutableListOf<String>()
-        val favorites = Wave.favoriteArtists(profile, generation, if (fast) 8 else 12)
+        val favorites = Wave.favoriteArtists(profile, generation, if (fast) 6 else 12)
         val ownedKeys = owned.map { Wave.recordingKey(it) }.toSet()
         val personal = personalPool(owned, profile, recent, generation)
         if (favorites.isEmpty() && personal.isEmpty()) {
@@ -89,7 +89,7 @@ class WaveEngine(
                 report("Волна: ищем ещё у ваших исполнителей")
                 val knownArtists = profile.artists.keys.toList()
                 searchStage(
-                    client, favorites.map { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }, profile, knownArtists,
+                    client, artistSeeds(favorites), profile, knownArtists,
                     allowGlobalCatalog = true, notes = notes,
                     sink = { song ->
                         // Only tracks the listener does not have yet: the library is covered by the personal pool.
@@ -131,6 +131,16 @@ class WaveEngine(
         if (playable.isEmpty()) throw WaveUnavailable("Не удалось подобрать ни одного трека. Попробуйте ещё раз.")
         return WaveBuild(playable, notes)
     }
+
+    /**
+     * A plain artist query mostly returns the artist's best-known tracks, which the listener has
+     * usually liked already. Query variants reach further into the same artist's catalog; results
+     * are still required to be by exactly that artist. Plain queries for every artist go first.
+     */
+    private fun artistSeeds(artists: List<String>): List<WaveSeed> =
+        listOf("", " feat", " remix", " album").flatMap { suffix ->
+            artists.map { WaveSeed(WaveSeedKind.ARTIST, it + suffix, artist = it) }
+        }
 
     /** Tracks the listener owns or approved, minus anything rejected; fresh ones first, sampled for variety. */
     private fun personalPool(owned: List<SongInfo>, profile: TasteProfile, recent: Set<String>, generation: Int): List<SongInfo> {

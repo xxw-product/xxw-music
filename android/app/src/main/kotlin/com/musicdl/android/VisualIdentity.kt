@@ -698,8 +698,8 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             listOf(
                 Triple(PlayerTheme.DEFAULT, "По умолчанию", "Размытая обложка на фоне"),
                 Triple(PlayerTheme.EXPRESSIVE, "Material 3 Expressive", "Цвета подбираются под обложку"),
-                Triple(PlayerTheme.YANDEX, "Как в Яндекс Музыке", "Графитовый фон, жёлтая кнопка"),
-                Triple(PlayerTheme.SPOTIFY, "Как в Spotify", "Градиент от обложки, зелёные акценты"),
+                Triple(PlayerTheme.YANDEX, "Как в Яндекс Музыке", "Графитовый фон, кнопка цвета темы"),
+                Triple(PlayerTheme.SPOTIFY, "Как в Spotify", "Градиент от обложки, акценты цвета темы"),
                 Triple(PlayerTheme.APPLE, "Как в Apple Music", "Обложка на весь экран, ползунок громкости"),
             ).forEach { (theme, title, caption) ->
                 Row(

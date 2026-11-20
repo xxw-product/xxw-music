@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.drawWithContent
@@ -93,9 +94,7 @@ import kotlin.math.roundToInt
 
 // Brand-inspired palettes only: no logos, fonts or artwork from the services themselves.
 internal val YandexBg = Color(0xFF2B2A2D)
-internal val YandexYellow = Color(0xFFFFE600)
 internal val SpotifyBg = Color(0xFF121212)
-internal val SpotifyGreen = Color(0xFF1ED760)
 
 /** Everything the themed player layouts need, so they stay out of the already huge FullPlayer. */
 internal class PlayerHooks(
@@ -108,6 +107,7 @@ internal class PlayerHooks(
     val liked: Boolean,
     val lyricsMode: Boolean,
     val seed: Color,
+    val accent: Color,
     val onClose: () -> Unit,
     val onPlayPause: () -> Unit,
     val onNext: () -> Unit,
@@ -123,6 +123,7 @@ internal class PlayerHooks(
     val onOpenActions: () -> Unit,
     val onToggleLyrics: () -> Unit,
 ) {
+    val onAccent: Color get() = if (accent.luminance() > 0.5f) Color.Black else Color.White
     val playing get() = state.player.isPlaying
     val speedLabel get() = "${state.playbackSpeed.toString().removeSuffix(".0")}×"
 }
@@ -292,9 +293,9 @@ private fun YandexBody(h: PlayerHooks) {
     Row(Modifier.fillMaxWidth().padding(vertical = 18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Glyph(Icons.Rounded.ThumbDown, "Реже", h.onDislike, tint = muted)
         Glyph(Icons.Rounded.SkipPrevious, "Предыдущий", h.onPrevious, size = 40.dp, box = 56.dp)
-        Surface(onClick = h.onPlayPause, shape = CircleShape, color = YandexYellow, contentColor = Color.Black,
+        Surface(onClick = h.onPlayPause, shape = CircleShape, color = h.accent, contentColor = h.onAccent,
             modifier = Modifier.size(90.dp).semantics { contentDescription = if (h.playing) "Пауза" else "Воспроизвести" }) {
-            Box(contentAlignment = Alignment.Center) { PlayGlyph(h, Color.Black, 44.dp) }
+            Box(contentAlignment = Alignment.Center) { PlayGlyph(h, h.onAccent, 44.dp) }
         }
         Glyph(Icons.Rounded.SkipNext, "Следующий", h.onNext, size = 40.dp, box = 56.dp)
         Glyph(if (h.liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Нравится", h.onLike)
@@ -325,11 +326,11 @@ private fun SpotifyBody(h: PlayerHooks) {
         }
         Glyph(Icons.Rounded.Close, "Реже", h.onDislike, size = 28.dp)
         Glyph(if (h.liked) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, "Нравится", h.onLike, size = 30.dp,
-            tint = if (h.liked) SpotifyGreen else PlayerInk)
+            tint = if (h.liked) h.accent else PlayerInk)
     }
     ThemedSeek(PlayerTheme.SPOTIFY, h)
     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Glyph(Icons.Rounded.Shuffle, "Перемешать", h.onShuffle, tint = if (h.state.shuffle) SpotifyGreen else PlayerInk.copy(alpha = 0.7f))
+        Glyph(Icons.Rounded.Shuffle, "Перемешать", h.onShuffle, tint = if (h.state.shuffle) h.accent else PlayerInk.copy(alpha = 0.7f))
         Glyph(Icons.Rounded.SkipPrevious, "Предыдущий", h.onPrevious, size = 42.dp, box = 56.dp)
         Surface(onClick = h.onPlayPause, shape = CircleShape, color = Color.White, contentColor = Color.Black,
             modifier = Modifier.size(70.dp).semantics { contentDescription = if (h.playing) "Пауза" else "Воспроизвести" }) {
@@ -337,12 +338,12 @@ private fun SpotifyBody(h: PlayerHooks) {
         }
         Glyph(Icons.Rounded.SkipNext, "Следующий", h.onNext, size = 42.dp, box = 56.dp)
         Glyph(if (h.state.repeatOne) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Повтор трека", h.onRepeat,
-            tint = if (h.state.repeatOne) SpotifyGreen else PlayerInk.copy(alpha = 0.7f))
+            tint = if (h.state.repeatOne) h.accent else PlayerInk.copy(alpha = 0.7f))
     }
     Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = h.onSpeed) { Text(h.speedLabel, color = PlayerInk) }
         Row {
-            Glyph(Icons.Rounded.FormatQuote, "Текст песни", h.onToggleLyrics, size = 24.dp, tint = if (h.lyricsMode) SpotifyGreen else PlayerInk)
+            Glyph(Icons.Rounded.FormatQuote, "Текст песни", h.onToggleLyrics, size = 24.dp, tint = if (h.lyricsMode) h.accent else PlayerInk)
             Glyph(Icons.Rounded.PlaylistAdd, "В плейлист", h.onAddToPlaylist, size = 24.dp)
             Glyph(Icons.Rounded.QueueMusic, "Очередь", h.onOpenQueue, size = 24.dp)
         }

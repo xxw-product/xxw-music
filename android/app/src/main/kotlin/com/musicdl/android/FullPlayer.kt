@@ -35,7 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.text.drawText
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -99,8 +101,7 @@ internal fun FullPlayer(
     val branded = theme.branded
     val PlayerAccent = when {
         expressive -> scheme.primary
-        theme == PlayerTheme.YANDEX -> YandexYellow
-        theme == PlayerTheme.SPOTIFY -> SpotifyGreen
+        theme == PlayerTheme.YANDEX || theme == PlayerTheme.SPOTIFY -> Appearance.accentColor
         theme == PlayerTheme.APPLE -> Color.White
         else -> palette.accent
     }
@@ -140,7 +141,7 @@ internal fun FullPlayer(
     val hooks = PlayerHooks(
         state = state, progress = playbackProgress, title = song.songName ?: "Без названия", artist = song.singers.orEmpty(),
         subtitle = if (state.queueCount > 0) "Трек ${state.queuePosition.coerceAtLeast(1)} из ${state.queueCount}" else sourceName(song.source),
-        songKey = song.key(), liked = song.key() in state.likedKeys, lyricsMode = lyricsMode, seed = palette.seed,
+        songKey = song.key(), liked = song.key() in state.likedKeys, lyricsMode = lyricsMode, seed = palette.seed, accent = Appearance.accentColor,
         onClose = onClose, onPlayPause = onPlayPause, onNext = onNext, onPrevious = onPrevious, onSeek = onSeek,
         onLike = onLike, onDislike = onDislike, onShuffle = onShuffle, onRepeat = onRepeat, onSpeed = onSpeed,
         onAddToPlaylist = onAddToPlaylist, onOpenQueue = onOpenQueue, onOpenActions = onOpenActions,
@@ -484,7 +485,11 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
         }
         lyrics.hasTimings -> BoxWithConstraints(modifier) {
             val animated = Appearance.lyricsAnimated
-            val active = lyrics.lines.indexOfLast { it.timeMs <= state.player.positionMs }
+            // A per-frame clock keeps the fill and the line changes smooth between the player's sparse position ticks.
+            val clock = rememberLyricsClock(state.player.positionMs, state.player.isPlaying, state.playbackSpeed, animated)
+            val lines = lyrics.lines
+            val activeState = remember(lines) { derivedStateOf { lines.indexOfLast { it.timeMs <= clock.value } } }
+            val active = activeState.value
             val listState = rememberLazyListState()
             // Animated mode keeps the active line near the top, like the reference; plain mode centres it.
             val anchor = if (animated) 0.28f else 0.5f
@@ -497,41 +502,37 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
                     layout.visibleItemsInfo.firstOrNull { it.index == active }?.let { row ->
                         val target = layout.viewportStartOffset + (layout.viewportEndOffset - layout.viewportStartOffset) * anchor
                         val delta = row.offset + row.size / 2f - target
-                        if (animated) listState.animateScrollBy(delta, tween(520)) else listState.scrollBy(delta)
+                        if (animated) listState.animateScrollBy(delta, tween(600)) else listState.scrollBy(delta)
                     }
                 }
             }
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
                 horizontalAlignment = if (animated) Alignment.Start else Alignment.CenterHorizontally) {
-                itemsIndexed(lyrics.lines) { index, line ->
+                itemsIndexed(lines) { index, line ->
                     val distance = abs(index - active)
                     val onClickLine = { onSeek((line.timeMs.toFloat() / state.player.durationMs).coerceIn(0f, 1f)) }
                     if (animated) {
-                        val scale by animateFloatAsState(if (distance == 0) 1f else 0.94f, tween(350), label = "lineScale")
-                        val alpha by animateFloatAsState(if (distance == 0) 1f else (0.5f - distance * 0.06f).coerceAtLeast(0.18f), tween(350), label = "lineOpacity")
-                        val blurRadius by androidx.compose.animation.core.animateDpAsState(
-                            if (distance == 0 || active < 0) 0.dp else (distance * 1.6f).coerceAtMost(6f).dp, tween(350), label = "lineBlur")
-                        val next = lyrics.lines.getOrNull(index + 1)?.timeMs ?: state.player.durationMs
+                        // The animated values are read inside graphicsLayer, so a tween frame only redraws.
+                        val scale = animateFloatAsState(if (distance == 0) 1f else 0.94f, tween(380), label = "lineScale")
+                        val alpha = animateFloatAsState(if (distance == 0) 1f else (0.5f - distance * 0.06f).coerceAtLeast(0.18f), tween(380), label = "lineOpacity")
+                        val blurDp = animateFloatAsState(if (distance == 0 || active < 0) 0f else (distance * 1.6f).coerceAtMost(6f), tween(380), label = "lineBlur")
+                        val next = lines.getOrNull(index + 1)?.timeMs ?: state.player.durationMs
                         val lineDuration = minOf(next - line.timeMs, maxOf(1500L, line.text.length * 90L)).coerceAtLeast(500L)
-                        val fill = if (distance == 0) ((state.player.positionMs - line.timeMs).toFloat() / lineDuration).coerceIn(0f, 1f) else 0f
-                        val fillSmooth by animateFloatAsState(fill, tween(220), label = "lineFill")
                         Box(Modifier.fillMaxWidth().clickable(enabled = state.player.durationMs > 0, onClick = onClickLine)
                             .padding(vertical = 12.dp, horizontal = 4.dp)
-                            .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha; transformOrigin = TransformOrigin(0f, 0.5f) }
-                            .let { if (android.os.Build.VERSION.SDK_INT >= 31) it.blur(blurRadius, BlurredEdgeTreatment.Unbounded) else it },
-                        ) {
-                            val done = PlayerInk
-                            val pending = PlayerInk.copy(alpha = 0.55f)
-                            val soft = 3f
-                            val reach = fillSmooth * (line.text.length + soft)
-                            val styled = androidx.compose.ui.text.buildAnnotatedString {
-                                line.text.forEachIndexed { i, ch ->
-                                    val t = if (distance == 0) ((reach - i) / soft).coerceIn(0f, 1f) else 0f
-                                    withStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.lerp(pending, done, t))) { append(ch) }
+                            .graphicsLayer {
+                                scaleX = scale.value; scaleY = scale.value; this.alpha = alpha.value
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                                    val radius = blurDp.value.dp.toPx()
+                                    renderEffect = if (radius > 0.5f) androidx.compose.ui.graphics.BlurEffect(radius, radius, androidx.compose.ui.graphics.TileMode.Decal) else null
                                 }
+                            },
+                        ) {
+                            KaraokeLine(line.text, (size * 0.92f).sp, (size * 1.2f).sp) {
+                                if (distance == 0) ((clock.value - line.timeMs).toFloat() / lineDuration).coerceIn(0f, 1f) else 0f
                             }
-                            Text(styled, fontSize = (size * 0.92f).sp, lineHeight = (size * 1.2f).sp, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Box(Modifier.fillMaxWidth().heightIn(min = 88.dp).clickable(enabled = state.player.durationMs > 0, onClick = onClickLine)
@@ -555,4 +556,52 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
             }
         }
     }
+}
+
+/** Playback position extrapolated every frame while playing; re-synced whenever the real position drifts or jumps. */
+@Composable
+private fun rememberLyricsClock(positionMs: Long, playing: Boolean, speed: Float, smooth: Boolean): androidx.compose.runtime.State<Long> {
+    if (!smooth) return androidx.compose.runtime.rememberUpdatedState(positionMs)
+    val clock = remember { androidx.compose.runtime.mutableLongStateOf(positionMs) }
+    LaunchedEffect(positionMs, playing, speed) {
+        if (!playing || abs(positionMs - clock.longValue) > 400) clock.longValue = positionMs
+        if (playing) {
+            val startPos = clock.longValue
+            val startNanos = androidx.compose.runtime.withFrameNanos { it }
+            while (true) {
+                val now = androidx.compose.runtime.withFrameNanos { it }
+                clock.longValue = startPos + ((now - startNanos) / 1_000_000f * speed).toLong()
+            }
+        }
+    }
+    return clock
+}
+
+/**
+ * One lyric line: dim text with a bright copy revealed left to right. The reveal is computed while drawing,
+ * so a frame of the sweep never recomposes anything.
+ */
+@Composable
+private fun KaraokeLine(text: String, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, fill: () -> Float) {
+    var layout by remember(text) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    Text(
+        text, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold, color = PlayerInk.copy(alpha = 0.55f),
+        onTextLayout = { layout = it },
+        modifier = Modifier.drawWithContent {
+            drawContent()
+            val l = layout ?: return@drawWithContent
+            val position = fill() * text.length
+            if (position <= 0f) return@drawWithContent
+            for (i in 0 until l.lineCount) {
+                val start = l.getLineStart(i)
+                val end = l.getLineEnd(i)
+                if (position <= start) break
+                val x = if (position >= end) size.width
+                else l.getLineLeft(i) + (l.getLineRight(i) - l.getLineLeft(i)) * ((position - start) / (end - start).coerceAtLeast(1))
+                androidx.compose.ui.graphics.drawscope.clipRect(0f, l.getLineTop(i), x, l.getLineBottom(i)) {
+                    drawText(l, color = PlayerInk)
+                }
+            }
+        },
+    )
 }

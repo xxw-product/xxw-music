@@ -289,6 +289,66 @@ internal fun FullPlayer(
     }
 }
 
+/** Material 3 Expressive seek bar: a thick rounded track split by a vertical handle. */
+@Composable
+private fun ExpressiveSeekBar(value: Float, onChange: (Float) -> Unit, onCommit: (Float) -> Unit, enabled: Boolean, accent: Color) {
+    Box(
+        Modifier.fillMaxWidth().height(52.dp).pointerInput(enabled) {
+            if (!enabled) return@pointerInput
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                var fraction = (down.position.x / size.width).coerceIn(0f, 1f)
+                onChange(fraction)
+                drag(down.id) { change ->
+                    fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                    onChange(fraction)
+                    change.consume()
+                }
+                onCommit(fraction)
+            }
+        }.semantics { contentDescription = "Перемотка" },
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val trackHeight = 28.dp.toPx()
+            val top = (size.height - trackHeight) / 2f
+            val x = size.width * value.coerceIn(0f, 1f)
+            val gap = 6.dp.toPx()
+            val radius = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2f)
+            val activeEnd = (x - gap).coerceAtLeast(0f)
+            if (activeEnd > 0f) drawRoundRect(accent, androidx.compose.ui.geometry.Offset(0f, top),
+                androidx.compose.ui.geometry.Size(activeEnd.coerceAtLeast(trackHeight / 2f), trackHeight), radius)
+            val inactiveStart = (x + gap).coerceAtMost(size.width)
+            if (inactiveStart < size.width) drawRoundRect(Color.White.copy(alpha = 0.18f),
+                androidx.compose.ui.geometry.Offset(inactiveStart, top),
+                androidx.compose.ui.geometry.Size(size.width - inactiveStart, trackHeight), radius)
+            val handleWidth = 5.dp.toPx()
+            drawRoundRect(accent, androidx.compose.ui.geometry.Offset((x - handleWidth / 2f).coerceIn(0f, size.width - handleWidth), 0f),
+                androidx.compose.ui.geometry.Size(handleWidth, size.height), androidx.compose.ui.geometry.CornerRadius(handleWidth / 2f))
+        }
+    }
+}
+
+/** Filled tonal key of the expressive player: circles on the sides, a large rounded square in the middle. */
+@Composable
+private fun ExpressiveKey(
+    icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, container: Color, content: Color,
+    modifier: Modifier, shape: androidx.compose.ui.graphics.Shape, onClick: () -> Unit,
+    buffering: Boolean = false, iconSize: androidx.compose.ui.unit.Dp = 28.dp,
+) {
+    val interactions = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "keyPress")
+    Surface(
+        onClick = onClick, interactionSource = interactions, shape = shape, color = container, contentColor = content,
+        modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale }.semantics { this.contentDescription = description },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (buffering) CircularProgressIndicator(Modifier.size(iconSize), color = content, strokeWidth = 2.dp)
+            else Icon(icon, null, Modifier.size(iconSize))
+        }
+    }
+}
+
 /**
  * The current cover as the player's background: full-bleed, blurred, cropped without distortion and
  * cross-faded between tracks, so switching never flashes a black frame.

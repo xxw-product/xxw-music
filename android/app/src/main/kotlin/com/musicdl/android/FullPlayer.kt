@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -598,7 +599,7 @@ private fun KaraokeLine(text: String, fontSize: androidx.compose.ui.unit.TextUni
                 if (position <= start) break
                 val x = if (position >= end) size.width
                 else l.getLineLeft(i) + (l.getLineRight(i) - l.getLineLeft(i)) * ((position - start) / (end - start).coerceAtLeast(1))
-                androidx.compose.ui.graphics.drawscope.clipRect(0f, l.getLineTop(i), x, l.getLineBottom(i)) {
+                clipRect(0f, l.getLineTop(i), x, l.getLineBottom(i)) {
                     drawText(l, color = PlayerInk)
                 }
             }

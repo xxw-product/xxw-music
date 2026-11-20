@@ -4,7 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 
-internal data class CoverPalette(val background: Color, val surface: Color, val accent: Color)
+internal data class CoverPalette(val background: Color, val surface: Color, val accent: Color, val seed: Color = accent)
 
 /** Quantize a small sample; ignore near-black pixels rather than tint everything black. */
 internal fun coverPalette(bitmap: Bitmap?): CoverPalette {
@@ -24,5 +24,5 @@ internal fun coverPalette(bitmap: Bitmap?): CoverPalette {
             selected = Color(((key shr 6) * 32 + 16) / 255f, (((key shr 3) and 7) * 32 + 16) / 255f, ((key and 7) * 32 + 16) / 255f)
         }
     }
-    return CoverPalette(lerp(Color.Black, selected, 0.22f), lerp(Color.Black, selected, 0.48f), lerp(selected, Color.White, 0.65f))
+    return CoverPalette(lerp(Color.Black, selected, 0.22f), lerp(Color.Black, selected, 0.48f), lerp(selected, Color.White, 0.65f), selected)
 }

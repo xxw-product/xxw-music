@@ -52,7 +52,8 @@ import androidx.lifecycle.compose.currentStateAsState
 import kotlin.math.*
 import kotlinx.coroutines.launch
 
-internal val Silver = Color(0xFFDDE0E5)
+/** The app accent: silver by default, or the colour chosen in Settings → Внешний вид. */
+internal val Silver: Color get() = Appearance.accentColor
 internal val Vinyl = Color(0xFF050506)
 
 @Composable
@@ -672,6 +673,43 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 vpnAutoUpdate = it
                 vpnPrefs.edit().putBoolean(MusicVpnService.KEY_AUTO_UPDATE, it).apply()
                 SubscriptionRefreshWorker.apply(vpnContext, it)
+            }
+        }
+
+        SettingsGroup("Внешний вид") {
+            val appearanceContext = LocalContext.current
+            Text("Цвет темы", style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val options = Appearance.accents.map { Triple(it.id, it.label, Appearance.swatch(it)) } +
+                    (if (Appearance.dynamicAvailable) listOf(Triple(Appearance.DYNAMIC, "Из обоев", Appearance.dynamicSwatch())) else emptyList())
+                options.forEach { (id, label, color) ->
+                    val selected = Appearance.accentId == id
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape).background(color)
+                            .border(if (selected) 3.dp else 1.dp, if (selected) Color.White else Color(0xFF3A3C42), CircleShape)
+                            .clickable { Appearance.setAccent(appearanceContext, id) }
+                            .semantics { contentDescription = label; this.selected = selected },
+                        contentAlignment = Alignment.Center,
+                    ) { if (selected) Icon(Icons.Rounded.Check, null, tint = Vinyl, modifier = Modifier.size(22.dp)) }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Тема плеера", style = MaterialTheme.typography.titleSmall)
+            listOf(
+                Triple(PlayerTheme.DEFAULT, "По умолчанию", "Размытая обложка на фоне"),
+                Triple(PlayerTheme.EXPRESSIVE, "Material 3 Expressive", "Цвета подбираются под обложку"),
+            ).forEach { (theme, title, caption) ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .clickable { Appearance.setPlayerTheme(appearanceContext, theme) }.padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = Appearance.playerTheme == theme, onClick = { Appearance.setPlayerTheme(appearanceContext, theme) })
+                    Column(Modifier.weight(1f)) {
+                        Text(title, style = MaterialTheme.typography.titleSmall)
+                        Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
         }
 

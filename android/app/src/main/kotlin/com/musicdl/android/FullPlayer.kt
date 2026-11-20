@@ -53,6 +53,7 @@ import kotlin.math.abs
 private val PlayerInk = Color(0xFFF4F4F2)
 private val PlayerMuted = Color(0xFFB9BDC4)
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun FullPlayer(
     state: MusicUiState, progressFlow: StateFlow<Float>, startWithLyrics: Boolean, onClose: () -> Unit,
@@ -82,8 +83,11 @@ internal fun FullPlayer(
         CoverCache.load(cover)?.let { bitmap = it }
     }
     val palette = remember(bitmap) { coverPalette(bitmap) }
-    val background by animateColorAsState(palette.background, tween(420), label = "playerBackground")
-    val PlayerAccent = palette.accent
+    // Material 3 Expressive: a full tonal scheme grown from the cover colour; default keeps the blurred-cover look.
+    val expressive = Appearance.playerTheme == PlayerTheme.EXPRESSIVE
+    val scheme = remember(palette.seed) { expressiveScheme(palette.seed) }
+    val background by animateColorAsState(if (expressive) scheme.surface else palette.background, tween(420), label = "playerBackground")
+    val PlayerAccent = if (expressive) scheme.primary else palette.accent
     val motionEnabled = remember(context) {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
     }
@@ -105,11 +109,19 @@ internal fun FullPlayer(
     LaunchedEffect(lyricsMode, song.key()) { if (lyricsMode) onLoadLyrics() }
     BackHandler(lyricsMode) { lyricsMode = false }
 
+    androidx.compose.material3.MaterialExpressiveTheme(
+        colorScheme = if (expressive) scheme else MaterialTheme.colorScheme,
+        motionScheme = androidx.compose.material3.MotionScheme.expressive(),
+        shapes = MaterialTheme.shapes,
+    ) {
     Surface(Modifier.fillMaxSize(), color = background, contentColor = PlayerInk) {
         Box(Modifier.fillMaxSize()) {
             val canvas = state.player.canvas
             var canvasFailed by remember(canvas?.url) { mutableStateOf(false) }
-            if (canvas != null && !canvasFailed) {
+            if (expressive) {
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                    0f to scheme.primaryContainer.copy(alpha = 0.7f), 0.55f to scheme.surfaceContainer, 1f to scheme.surface)))
+            } else if (canvas != null && !canvasFailed) {
                 Box(Modifier.fillMaxSize()) {
                     ClipVideo(canvas, onError = { canvasFailed = true }, modifier = Modifier.fillMaxSize())
                     // Canvas is decoration: a dark scrim keeps the title and controls readable.
@@ -180,7 +192,7 @@ internal fun FullPlayer(
                                     lyricsMode = !lyricsMode
                                     true
                                 }
-                            }.clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.35f)),
+                            }.clip(RoundedCornerShape(if (expressive) 40.dp else 12.dp)).background(Color.Black.copy(alpha = 0.35f)),
                             contentAlignment = Alignment.Center,
                         ) {
                             CoverImage(cover, Modifier.fillMaxSize()) {
@@ -246,6 +258,7 @@ internal fun FullPlayer(
                 }
             }
         }
+    }
     }
     if (settings) {
         AlertDialog(onDismissRequest = { settings = false }, title = { Text("Карусель текста") }, text = {

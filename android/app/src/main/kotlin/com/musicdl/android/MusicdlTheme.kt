@@ -11,7 +11,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /** XXW Music: hard monochrome contrast, details over softness. */
-private val XxwDark = darkColorScheme(
+internal val XxwDark = darkColorScheme(
     primary = Color(0xFFF4F4F2),
     onPrimary = Color(0xFF050506),
     primaryContainer = Color(0xFF181A1E),
@@ -48,9 +48,11 @@ private val XxwShapes = Shapes(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MusicdlTheme(content: @Composable () -> Unit) {
-    // Force monochrome identity over dynamic wallpaper colors.
+    // Monochrome by default; the user may pick an accent colour (or wallpaper colours) in Settings.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scheme = Appearance.appScheme(context)
     MaterialExpressiveTheme(
-        colorScheme = XxwDark,
+        colorScheme = scheme,
         motionScheme = MotionScheme.expressive(),
         shapes = XxwShapes,
         content = content,

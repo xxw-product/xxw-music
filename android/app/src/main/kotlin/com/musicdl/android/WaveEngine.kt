@@ -73,7 +73,8 @@ class WaveEngine(
         owned: List<SongInfo> = emptyList(),
     ): WaveBuild {
         val notes = mutableListOf<String>()
-        val favorites = Wave.favoriteArtists(profile, generation, if (fast) 5 else 8)
+        val favorites = Wave.favoriteArtists(profile, generation, if (fast) 8 else 12)
+        val ownedKeys = owned.map { Wave.recordingKey(it) }.toSet()
         val personal = personalPool(owned, profile, recent, generation)
         if (favorites.isEmpty() && personal.isEmpty()) {
             throw WaveUnavailable("Волне пока не на что опереться: поставьте лайки трекам или добавьте музыку в библиотеку.")
@@ -91,12 +92,13 @@ class WaveEngine(
                     client, favorites.map { WaveSeed(WaveSeedKind.ARTIST, it, artist = it) }, profile, knownArtists,
                     allowGlobalCatalog = true, notes = notes,
                     sink = { song ->
-                        if (Wave.recordingKey(song) !in recent) synchronized(found) {
+                        // Only tracks the listener does not have yet: the library is covered by the personal pool.
+                        if (Wave.recordingKey(song) !in recent && Wave.recordingKey(song) !in ownedKeys) synchronized(found) {
                             if (found.none { Wave.recordingKey(it) == Wave.recordingKey(song) }) found.add(song)
                         }
                     },
                     budget = if (fast) 6_000L else stageBudgetMs,
-                    enough = { fast && found.size >= limit * 2 },
+                    enough = { fast && found.size >= limit * 3 },
                 )
             } finally {
                 // Closing may wait on sockets stuck in the network; never let that delay the result.
@@ -114,7 +116,18 @@ class WaveEngine(
             recent = recent,
             penalties = profile.penalties,
         )
-        val playable = ranked.ifEmpty { candidates.shuffled() }.take(limit)
+        // Two new tracks by favourite artists for every one from the library; the library fills in
+        // when the catalogs have fewer new tracks than needed.
+        val ordered = ranked.ifEmpty { candidates.shuffled() }
+        val fresh = ordered.filter { Wave.recordingKey(it) !in ownedKeys }.toMutableList()
+        val mine = ordered.filter { Wave.recordingKey(it) in ownedKeys }.toMutableList()
+        val playable = buildList {
+            while (size < limit && (fresh.isNotEmpty() || mine.isNotEmpty())) {
+                repeat(2) { if (size < limit && fresh.isNotEmpty()) add(fresh.removeAt(0)) }
+                if (size < limit && mine.isNotEmpty()) add(mine.removeAt(0))
+                if (fresh.isEmpty() && mine.isEmpty()) break
+            }
+        }
         if (playable.isEmpty()) throw WaveUnavailable("Не удалось подобрать ни одного трека. Попробуйте ещё раз.")
         return WaveBuild(playable, notes)
     }

@@ -107,6 +107,7 @@ internal class PlayerHooks(
     val liked: Boolean,
     val lyricsMode: Boolean,
     val seed: Color,
+    val cover: android.graphics.Bitmap?,
     val accent: Color,
     val onClose: () -> Unit,
     val onPlayPause: () -> Unit,
@@ -148,7 +149,7 @@ internal fun AppleBackdrop(bitmap: android.graphics.Bitmap?, lyricsProgress: Flo
             Image(
                 bitmap = bitmap.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(0.66f).align(Alignment.TopCenter)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = 1f - lyricsProgress.coerceIn(0f, 1f) }
                     .drawWithContent {
                         drawContent()
                         drawRect(
@@ -158,8 +159,7 @@ internal fun AppleBackdrop(bitmap: android.graphics.Bitmap?, lyricsProgress: Flo
                     },
             )
         }
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.62f * lyricsProgress.coerceIn(0f, 1f))))
-    }
+            }
 }
 
 // ---------- header ----------
@@ -183,7 +183,7 @@ internal fun ThemedHeader(theme: PlayerTheme, h: PlayerHooks) {
             }
             IconButton(onClick = h.onOpenActions) { Icon(Icons.Rounded.MoreVert, "Действия с треком") }
         }
-        else -> Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
+        else -> if (h.lyricsMode) AppleLyricsHeader(h) else Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
             Box(
                 Modifier.width(44.dp).height(5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.55f))
                     .clickable(onClick = h.onClose).semantics { contentDescription = "Свернуть плеер" },
@@ -364,6 +364,7 @@ internal fun SpotifyLyricLine(state: MusicUiState, modifier: Modifier = Modifier
 // Apple Music: bare transport glyphs, star, volume slider, quiet bottom row.
 @Composable
 private fun AppleBody(h: PlayerHooks) {
+    if (h.lyricsMode) { AppleLyricsBar(h); return }
     val tint = lerp(h.seed, Color.White, 0.6f)
     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -411,5 +412,42 @@ private fun AppleVolume() {
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp), description = "Громкость",
         )
         Icon(Icons.Rounded.VolumeUp, null, Modifier.size(20.dp), tint = Color.White.copy(alpha = 0.7f))
+    }
+}
+
+/** Lyrics view of the Apple theme: a compact track header on top, the text takes the rest of the screen. */
+@Composable
+private fun AppleLyricsHeader(h: PlayerHooks) {
+    Row(Modifier.fillMaxWidth().height(72.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.15f))
+                .clickable(onClick = h.onToggleLyrics).semantics { contentDescription = "Вернуться к плееру" },
+        ) {
+            h.cover?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(h.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(h.artist, fontSize = 16.sp, color = Color.White.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Surface(onClick = h.onLike, shape = CircleShape, color = Color.White.copy(alpha = 0.2f),
+            modifier = Modifier.size(34.dp).semantics { contentDescription = "Нравится" }) {
+            Box(contentAlignment = Alignment.Center) { Icon(if (h.liked) Icons.Rounded.Star else Icons.Rounded.StarBorder, null, Modifier.size(20.dp)) }
+        }
+        Surface(onClick = h.onOpenActions, shape = CircleShape, color = Color.White.copy(alpha = 0.2f),
+            modifier = Modifier.padding(start = 10.dp).size(34.dp).semantics { contentDescription = "Действия с треком" }) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.MoreHoriz, null, Modifier.size(20.dp)) }
+        }
+    }
+}
+
+/** A slim, quiet control row under the lyrics so playback stays reachable without leaving the text. */
+@Composable
+private fun AppleLyricsBar(h: PlayerHooks) {
+    Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        Glyph(Icons.Rounded.FormatQuote, "Скрыть текст", h.onToggleLyrics, tint = Color.White)
+        Glyph(Icons.Rounded.FastRewind, "Предыдущий", h.onPrevious, size = 32.dp, tint = Color.White.copy(alpha = 0.8f))
+        IconButton(onClick = h.onPlayPause, modifier = Modifier.size(56.dp)) { PlayGlyph(h, Color.White, 40.dp) }
+        Glyph(Icons.Rounded.FastForward, "Следующий", h.onNext, size = 32.dp, tint = Color.White.copy(alpha = 0.8f))
+        Glyph(Icons.Rounded.QueueMusic, "Очередь", h.onOpenQueue, tint = Color.White.copy(alpha = 0.8f))
     }
 }

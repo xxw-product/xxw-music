@@ -142,7 +142,7 @@ internal fun FullPlayer(
     val hooks = PlayerHooks(
         state = state, progress = playbackProgress, title = song.songName ?: "Без названия", artist = song.singers.orEmpty(),
         subtitle = if (state.queueCount > 0) "Трек ${state.queuePosition.coerceAtLeast(1)} из ${state.queueCount}" else sourceName(song.source),
-        songKey = song.key(), liked = song.key() in state.likedKeys, lyricsMode = lyricsMode, seed = palette.seed, accent = Appearance.accentColor,
+        songKey = song.key(), liked = song.key() in state.likedKeys, lyricsMode = lyricsMode, seed = palette.seed, cover = bitmap, accent = Appearance.accentColor,
         onClose = onClose, onPlayPause = onPlayPause, onNext = onNext, onPrevious = onPrevious, onSeek = onSeek,
         onLike = onLike, onDislike = onDislike, onShuffle = onShuffle, onRepeat = onRepeat, onSpeed = onSpeed,
         onAddToPlaylist = onAddToPlaylist, onOpenQueue = onOpenQueue, onOpenActions = onOpenActions,
@@ -174,7 +174,7 @@ internal fun FullPlayer(
             } else when (theme) {
                 PlayerTheme.YANDEX -> Unit
                 PlayerTheme.SPOTIFY -> SpotifyBackdrop(palette.seed)
-                PlayerTheme.APPLE -> AppleBackdrop(bitmap, progress) { PlayerBackdrop(bitmap, palette) }
+                PlayerTheme.APPLE -> AppleBackdrop(bitmap, progress) { PlayerBackdrop(bitmap, palette, scrim = 1f - 0.45f * progress.coerceIn(0f, 1f)) }
                 else -> PlayerBackdrop(bitmap, palette)
             }
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 8.dp)) {
@@ -212,7 +212,7 @@ internal fun FullPlayer(
                         val side = minOf(maxWidth, maxHeight)
                         if (progress > 0.01f) {
                             LyricsCarousel(state, size, opacity,
-                                Modifier.fillMaxSize().padding(top = side / 4 + 20.dp).graphicsLayer { alpha = progress },
+                                Modifier.fillMaxSize().padding(top = if (theme == PlayerTheme.APPLE) 8.dp else side / 4 + 20.dp).graphicsLayer { alpha = progress },
                                 onSeek, PlayerAccent)
                         }
                         if (theme != PlayerTheme.APPLE) Box(
@@ -394,7 +394,7 @@ private fun ExpressiveKey(
  * cross-faded between tracks, so switching never flashes a black frame.
  */
 @Composable
-private fun PlayerBackdrop(bitmap: android.graphics.Bitmap?, palette: CoverPalette) {
+private fun PlayerBackdrop(bitmap: android.graphics.Bitmap?, palette: CoverPalette, scrim: Float = 1f) {
     // A ~80 px copy upscaled to the screen is already a soft gradient, and it costs a fraction of
     // a full-screen RenderEffect blur while looking the same under the scrim.
     val soft = remember(bitmap) {
@@ -431,9 +431,9 @@ private fun PlayerBackdrop(bitmap: android.graphics.Bitmap?, palette: CoverPalet
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.42f),
-                        0.45f to Color.Black.copy(alpha = 0.55f),
-                        1f to Color.Black.copy(alpha = 0.86f),
+                        0f to Color.Black.copy(alpha = 0.42f * scrim),
+                        0.45f to Color.Black.copy(alpha = 0.55f * scrim),
+                        1f to Color.Black.copy(alpha = 0.86f * scrim),
                     ),
                 ),
             )

@@ -751,7 +751,29 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Text("Шрифт", style = MaterialTheme.typography.titleSmall)
-            ChoiceChips(Appearance.fonts, Appearance.fontId) { Appearance.setFont(appearanceContext, it) }
+            ChoiceChips(
+                Appearance.fonts + Appearance.customFonts.map { "custom:$it" to Appearance.customLabel(it) },
+                Appearance.fontId,
+            ) { Appearance.setFont(appearanceContext, it) }
+            val fontScope = rememberCoroutineScope()
+            var fontMessage by remember { mutableStateOf<String?>(null) }
+            val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) fontScope.launch {
+                    val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Appearance.importFont(appearanceContext, uri) }
+                    result.onSuccess { Appearance.useCustomFont(appearanceContext, it); fontMessage = "Шрифт добавлен" }
+                        .onFailure { fontMessage = it.message ?: "Не удалось добавить шрифт" }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { fontPicker.launch(arrayOf("*/*")) }) { Text("Добавить свой шрифт") }
+                if (Appearance.fontId.startsWith("custom:")) {
+                    TextButton(onClick = { Appearance.deleteCustomFont(appearanceContext, Appearance.fontId.removePrefix("custom:")) }) {
+                        Text("Удалить выбранный")
+                    }
+                }
+            }
+            Text(fontMessage ?: "Файлы .ttf или .otf. Шрифт копируется в память приложения.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Размер текста", style = MaterialTheme.typography.titleSmall)
             ChoiceChips(
                 listOf(0.88f to "Мелкий", 1f to "Обычный", 1.15f to "Крупный", 1.3f to "Огромный"),

@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.Typeface
 
@@ -79,6 +80,64 @@ object Appearance {
         "serif" to "С засечками", "mono" to "Моноширинный", "cursive" to "Рукописный",
     )
 
+    /** Fonts the user imported; each is a file in the app's private storage. */
+    var customFonts by mutableStateOf<List<String>>(emptyList()); private set
+    private var fontsDir: java.io.File? = null
+    private val customFamilies = HashMap<String, FontFamily>()
+
+    fun customLabel(file: String) = file.substringBeforeLast('.').replace('_', ' ')
+
+    /** Copies a picked .ttf/.otf into private storage after checking its header; returns the stored file name. */
+    fun importFont(context: Context, uri: android.net.Uri): Result<String> = runCatching {
+        val dir = fontsDir ?: java.io.File(context.filesDir, "fonts").also { it.mkdirs(); fontsDir = it }
+        val shown = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "font.ttf"
+        val ext = shown.substringAfterLast('.', "").lowercase()
+        require(ext == "ttf" || ext == "otf") { "Нужен файл .ttf или .otf" }
+        val name = shown.substringBeforeLast('.').replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").take(60).ifBlank { "font" } + "." + ext
+        val target = java.io.File(dir, name)
+        val temp = java.io.File(dir, "$name.part")
+        context.contentResolver.openInputStream(uri)!!.use { input ->
+            temp.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    require(total <= 25L * 1024 * 1024) { "Файл больше 25 МБ" }
+                    out.write(buffer, 0, read)
+                }
+            }
+        }
+        val magic = temp.inputStream().use { stream -> ByteArray(4).also { stream.read(it) } }
+        val ok = magic.contentEquals(byteArrayOf(0, 1, 0, 0)) || String(magic, Charsets.ISO_8859_1) in setOf("OTTO", "true", "ttcf")
+        if (!ok) { temp.delete(); error("Это не файл шрифта") }
+        require(runCatching { android.graphics.Typeface.createFromFile(temp) }.isSuccess) { "Шрифт не читается" }
+        target.delete()
+        check(temp.renameTo(target)) { "Не удалось сохранить файл" }
+        name
+    }
+
+    /** Makes an imported font the active one. */
+    fun useCustomFont(context: Context, file: String) {
+        customFamilies.remove(file)
+        refreshCustomFonts()
+        setFont(context, "custom:$file")
+    }
+
+    fun deleteCustomFont(context: Context, file: String) {
+        java.io.File(fontsDir ?: return, file).delete()
+        customFamilies.remove(file)
+        refreshCustomFonts()
+        if (fontId == "custom:$file") setFont(context, "system")
+    }
+
+    private fun refreshCustomFonts() {
+        customFonts = fontsDir?.listFiles { f -> f.isFile && (f.name.endsWith(".ttf") || f.name.endsWith(".otf")) }
+            ?.map { it.name }?.sorted().orEmpty()
+    }
+
     private val lightFamily by lazy { FontFamily(Typeface(android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL))) }
     private val condensedFamily by lazy { FontFamily(Typeface(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL))) }
 
@@ -90,7 +149,14 @@ object Appearance {
             "serif" -> FontFamily.Serif
             "mono" -> FontFamily.Monospace
             "cursive" -> FontFamily.Cursive
-            else -> null
+            else -> if (fontId.startsWith("custom:")) {
+                val file = fontId.removePrefix("custom:")
+                customFamilies.getOrPut(file) {
+                    val f = java.io.File(fontsDir ?: return@getOrPut FontFamily.Default, file)
+                    if (f.isFile) FontFamily(Font(f, androidx.compose.ui.text.font.FontWeight.Normal), Font(f, androidx.compose.ui.text.font.FontWeight.Bold))
+                    else FontFamily.Default
+                }
+            } else null
         }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -124,7 +190,11 @@ object Appearance {
         val saved = prefs.getString("accent", "silver").orEmpty()
         accentId = if (saved == DYNAMIC && dynamicAvailable || accents.any { it.id == saved }) saved else "silver"
         lyricsAnimated = prefs.getBoolean("lyrics_anim", true)
-        fontId = prefs.getString("font", "system").orEmpty().takeIf { id -> fonts.any { it.first == id } } ?: "system"
+        fontsDir = java.io.File(context.filesDir, "fonts").also { it.mkdirs() }
+        refreshCustomFonts()
+        fontId = prefs.getString("font", "system").orEmpty().takeIf { id ->
+            fonts.any { it.first == id } || (id.startsWith("custom:") && id.removePrefix("custom:") in customFonts)
+        } ?: "system"
         fontScale = prefs.getFloat("font_scale", 1f).coerceIn(0.8f, 1.4f)
         blackBackground = prefs.getBoolean("black", false)
         uiAnimations = prefs.getBoolean("ui_anim", true)

@@ -794,7 +794,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             ToggleRow("Обложки", null, Appearance.showCovers) { Appearance.setShowCovers(appearanceContext, it) }
             ToggleRow("Формат, длительность, источник", "Третья строка под названием трека", Appearance.showTrackDetails) { Appearance.setShowTrackDetails(appearanceContext, it) }
             ToggleRow("Компактные карточки", null, Appearance.compactCards) { Appearance.setCompactCards(appearanceContext, it) }
-            ToggleRow("Фото исполнителей", "Подгружаются из интернета и сохраняются на телефоне", Appearance.showArtistPhotos) { Appearance.setShowArtistPhotos(appearanceContext, it) }
+            ToggleRow("Фото исполнителей", "Исполнителей из подписок и лайков сохраняем на телефон, остальных подгружаем", Appearance.showArtistPhotos) { Appearance.setShowArtistPhotos(appearanceContext, it) }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Text("Общее", style = MaterialTheme.typography.titleSmall)
             ToggleRow("Чёрный фон", "Чистый чёрный вместо тёмно-серого, экономит заряд на OLED", Appearance.blackBackground) { Appearance.setBlackBackground(appearanceContext, it) }

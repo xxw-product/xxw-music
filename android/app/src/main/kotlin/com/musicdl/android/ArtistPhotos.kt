@@ -43,7 +43,61 @@ object ArtistPhotos {
     /** What is already known without any I/O: a URL, or null when unknown or missing. */
     fun peek(name: String): String? = memory[Wave.key(name)]?.takeIf { it.isNotEmpty() }
 
+    private fun photoFile(context: Context, key: String): java.io.File {
+        val digest = java.security.MessageDigest.getInstance("MD5").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+        return java.io.File(java.io.File(context.applicationContext.filesDir, "artist_photos").also { it.mkdirs() }, "$digest.jpg")
+    }
+
+    /** The saved copy when there is one (works offline), otherwise the remote picture. */
     suspend fun photoUrl(context: Context, name: String): String? {
+        val key = Wave.key(name)
+        if (key.length >= 2) {
+            val local = withContext(Dispatchers.IO) { photoFile(context, key).takeIf { it.isFile && it.length() > 0 } }
+            if (local != null) return local.absolutePath
+        }
+        return remoteUrl(context, name)
+    }
+
+    /**
+     * Saves portraits of the artists the listener follows or likes, so lists keep their faces offline.
+     * Already saved photos are skipped; a failed download is simply retried on the next sync.
+     */
+    suspend fun saveFor(context: Context, names: Collection<String>): Int {
+        var saved = 0
+        val seen = HashSet<String>()
+        for (name in names) {
+            val key = Wave.key(name)
+            if (key.length < 2 || !seen.add(key)) continue
+            val file = photoFile(context, key)
+            if (file.isFile && file.length() > 0) continue
+            val url = remoteUrl(context, name) ?: continue
+            val bytes = gate.withPermit { withContext(Dispatchers.IO) { runCatching { download(url) }.getOrNull() } } ?: continue
+            withContext(Dispatchers.IO) {
+                val temp = java.io.File(file.parentFile, file.name + ".part")
+                runCatching { temp.writeBytes(bytes); temp.renameTo(file) }.onSuccess { saved++ }
+                temp.delete()
+            }
+        }
+        return saved
+    }
+
+    private fun download(url: String): ByteArray? {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 8_000
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+        return try {
+            if (connection.responseCode !in 200..299) return null
+            val bytes = connection.inputStream.use { it.readBytes() }
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bytes.size in 1..4_000_000 && bounds.outWidth > 0) bytes else null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun remoteUrl(context: Context, name: String): String? {
         val key = Wave.key(name)
         if (key.length < 2) return null
         memory[key]?.let { return it.takeIf(String::isNotEmpty) }

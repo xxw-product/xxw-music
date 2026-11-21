@@ -343,6 +343,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
             }
+            syncArtistPhotos()
         }
 
         PlayerHolder.next = ::playNext
@@ -1557,6 +1558,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
         val following = library.toggleFollowArtist(artist)
         _state.update { it.copy(followedArtists = library.followedArtists()) }
+        if (following) syncArtistPhotos()
         _messages.tryEmit(if (following) "Подписка: $artist" else "Отписка: $artist")
     }
 
@@ -1573,6 +1575,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     /** «Что у него нового»: the same engine search, but for one artist and full tracks only. */
     private var artistJob: Job? = null
     private var artistHitsJob: Job? = null
+    private var photoSyncJob: Job? = null
+
+    /** Keeps portraits of followed artists and of the most-liked ones on the device for offline use. */
+    private fun syncArtistPhotos() {
+        if (!Appearance.showArtistPhotos) return
+        photoSyncJob?.cancel()
+        photoSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            val followed = library.followedArtists()
+            val liked = library.likes().mapNotNull { it.singers?.trim()?.takeIf { name -> name.isNotEmpty() && name != "NULL" } }
+                .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }
+            ArtistPhotos.saveFor(getApplication(), (followed + liked).take(300))
+        }
+    }
 
     /** Artist cards for the query; independent of the track search, so a slow lookup never delays tracks. */
     private fun loadArtistHits(keyword: String) {
@@ -1864,6 +1879,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (nowLiked) {
             like(song)
+            syncArtistPhotos()
         } else {
             waveStore.recordLibraryRemove(song)
             _messages.tryEmit("Убрано из «Нравится»")

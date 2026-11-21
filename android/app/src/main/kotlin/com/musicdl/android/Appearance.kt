@@ -74,6 +74,7 @@ object Appearance {
     var showCovers by mutableStateOf(true); private set
     var showTrackDetails by mutableStateOf(true); private set
     var compactCards by mutableStateOf(false); private set
+    var showArtistPhotos by mutableStateOf(true); private set
 
     val fonts = listOf(
         "system" to "Системный", "light" to "Тонкий", "condensed" to "Узкий",
@@ -173,6 +174,7 @@ object Appearance {
     fun setShowArtistsTab(context: Context, on: Boolean) { showArtistsTab = on; prefs(context).edit().putBoolean("tab_artists", on).apply() }
     fun setShowCovers(context: Context, on: Boolean) { showCovers = on; prefs(context).edit().putBoolean("covers", on).apply() }
     fun setShowTrackDetails(context: Context, on: Boolean) { showTrackDetails = on; prefs(context).edit().putBoolean("details", on).apply() }
+    fun setShowArtistPhotos(context: Context, on: Boolean) { showArtistPhotos = on; prefs(context).edit().putBoolean("artist_photos", on).apply() }
     fun setCompactCards(context: Context, on: Boolean) { compactCards = on; prefs(context).edit().putBoolean("compact", on).apply() }
 
     val dynamicAvailable: Boolean get() = Build.VERSION.SDK_INT >= 31
@@ -207,6 +209,7 @@ object Appearance {
         showCovers = prefs.getBoolean("covers", true)
         showTrackDetails = prefs.getBoolean("details", true)
         compactCards = prefs.getBoolean("compact", false)
+        showArtistPhotos = prefs.getBoolean("artist_photos", true)
         playerTheme = runCatching { PlayerTheme.valueOf(prefs.getString("player", "DEFAULT").orEmpty()) }
             .getOrDefault(PlayerTheme.DEFAULT)
     }

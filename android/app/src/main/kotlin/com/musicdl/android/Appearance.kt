@@ -6,9 +6,12 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.Typeface
 
 enum class PlayerTheme(val branded: Boolean = false) { DEFAULT, EXPRESSIVE, YANDEX(true), SPOTIFY(true), APPLE(true) }
 
@@ -50,6 +53,62 @@ object Appearance {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("lyrics_anim", on).apply()
     }
 
+    // ---- typography
+    var fontId by mutableStateOf("system"); private set
+    var fontScale by mutableFloatStateOf(1f); private set
+
+    // ---- general
+    var blackBackground by mutableStateOf(false); private set
+    var uiAnimations by mutableStateOf(true); private set
+
+    // ---- bottom navigation pill
+    var navLabels by mutableStateOf("none"); private set      // none | active | all
+    var navSize by mutableStateOf("normal"); private set      // compact | normal | large
+    var navShape by mutableStateOf("round"); private set      // round | soft | square
+    var navFloating by mutableStateOf(true); private set
+    var showWaveTab by mutableStateOf(true); private set
+    var showArtistsTab by mutableStateOf(true); private set
+
+    // ---- track lists
+    var showCovers by mutableStateOf(true); private set
+    var showTrackDetails by mutableStateOf(true); private set
+    var compactCards by mutableStateOf(false); private set
+
+    val fonts = listOf(
+        "system" to "Системный", "light" to "Тонкий", "condensed" to "Узкий",
+        "serif" to "С засечками", "mono" to "Моноширинный", "cursive" to "Рукописный",
+    )
+
+    private val lightFamily by lazy { FontFamily(Typeface(android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL))) }
+    private val condensedFamily by lazy { FontFamily(Typeface(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL))) }
+
+    /** Null keeps the platform default. */
+    val fontFamily: FontFamily?
+        get() = when (fontId) {
+            "light" -> lightFamily
+            "condensed" -> condensedFamily
+            "serif" -> FontFamily.Serif
+            "mono" -> FontFamily.Monospace
+            "cursive" -> FontFamily.Cursive
+            else -> null
+        }
+
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun setFont(context: Context, id: String) { fontId = id; prefs(context).edit().putString("font", id).apply() }
+    fun setFontScale(context: Context, scale: Float) { fontScale = scale; prefs(context).edit().putFloat("font_scale", scale).apply() }
+    fun setBlackBackground(context: Context, on: Boolean) { blackBackground = on; prefs(context).edit().putBoolean("black", on).apply() }
+    fun setUiAnimations(context: Context, on: Boolean) { uiAnimations = on; prefs(context).edit().putBoolean("ui_anim", on).apply() }
+    fun setNavLabels(context: Context, v: String) { navLabels = v; prefs(context).edit().putString("nav_labels", v).apply() }
+    fun setNavSize(context: Context, v: String) { navSize = v; prefs(context).edit().putString("nav_size", v).apply() }
+    fun setNavShape(context: Context, v: String) { navShape = v; prefs(context).edit().putString("nav_shape", v).apply() }
+    fun setNavFloating(context: Context, on: Boolean) { navFloating = on; prefs(context).edit().putBoolean("nav_floating", on).apply() }
+    fun setShowWaveTab(context: Context, on: Boolean) { showWaveTab = on; prefs(context).edit().putBoolean("tab_wave", on).apply() }
+    fun setShowArtistsTab(context: Context, on: Boolean) { showArtistsTab = on; prefs(context).edit().putBoolean("tab_artists", on).apply() }
+    fun setShowCovers(context: Context, on: Boolean) { showCovers = on; prefs(context).edit().putBoolean("covers", on).apply() }
+    fun setShowTrackDetails(context: Context, on: Boolean) { showTrackDetails = on; prefs(context).edit().putBoolean("details", on).apply() }
+    fun setCompactCards(context: Context, on: Boolean) { compactCards = on; prefs(context).edit().putBoolean("compact", on).apply() }
+
     val dynamicAvailable: Boolean get() = Build.VERSION.SDK_INT >= 31
 
     /** Foreground accent used across the app (formerly a fixed silver). */
@@ -65,6 +124,19 @@ object Appearance {
         val saved = prefs.getString("accent", "silver").orEmpty()
         accentId = if (saved == DYNAMIC && dynamicAvailable || accents.any { it.id == saved }) saved else "silver"
         lyricsAnimated = prefs.getBoolean("lyrics_anim", true)
+        fontId = prefs.getString("font", "system").orEmpty().takeIf { id -> fonts.any { it.first == id } } ?: "system"
+        fontScale = prefs.getFloat("font_scale", 1f).coerceIn(0.8f, 1.4f)
+        blackBackground = prefs.getBoolean("black", false)
+        uiAnimations = prefs.getBoolean("ui_anim", true)
+        navLabels = prefs.getString("nav_labels", "none").orEmpty()
+        navSize = prefs.getString("nav_size", "normal").orEmpty()
+        navShape = prefs.getString("nav_shape", "round").orEmpty()
+        navFloating = prefs.getBoolean("nav_floating", true)
+        showWaveTab = prefs.getBoolean("tab_wave", true)
+        showArtistsTab = prefs.getBoolean("tab_artists", true)
+        showCovers = prefs.getBoolean("covers", true)
+        showTrackDetails = prefs.getBoolean("details", true)
+        compactCards = prefs.getBoolean("compact", false)
         playerTheme = runCatching { PlayerTheme.valueOf(prefs.getString("player", "DEFAULT").orEmpty()) }
             .getOrDefault(PlayerTheme.DEFAULT)
     }
@@ -86,9 +158,14 @@ object Appearance {
 
     /** App colour scheme for the chosen accent. */
     fun appScheme(context: Context): ColorScheme {
-        if (accentId == DYNAMIC && dynamicAvailable) return runCatching { dynamicDarkColorScheme(context) }.getOrDefault(XxwDark)
-        val hue = accents.firstOrNull { it.id == accentId }?.hue ?: return XxwDark
-        return schemeFromHue(hue, 0.85f, tint = 0.22f)
+        val base = when {
+            accentId == DYNAMIC && dynamicAvailable -> runCatching { dynamicDarkColorScheme(context) }.getOrDefault(XxwDark)
+            else -> accents.firstOrNull { it.id == accentId }?.hue?.let { schemeFromHue(it, 0.85f, tint = 0.22f) } ?: XxwDark
+        }
+        return if (blackBackground) base.copy(
+            background = Color.Black, surface = Color.Black, surfaceContainerLowest = Color.Black,
+            surfaceContainerLow = Color(0xFF070707),
+        ) else base
     }
 }
 

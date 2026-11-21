@@ -62,7 +62,7 @@ internal fun motionEnabled(): Boolean {
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val scale = android.provider.Settings.Global.getFloat(context.contentResolver,
         android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-    return scale > 0f && lifecycle.isAtLeast(Lifecycle.State.STARTED)
+    return Appearance.uiAnimations && scale > 0f && lifecycle.isAtLeast(Lifecycle.State.STARTED)
 }
 
 /** One shared, only lightly bouncy spring so the bar's parts move as one piece. */
@@ -281,7 +281,19 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
         Triple(FeedTab.SEARCH, "Поиск", NavigationGlyph.SEARCH),
         Triple(FeedTab.LIKES, "Моё", NavigationGlyph.LIBRARY),
         Triple(FeedTab.ARTISTS, "Артисты", NavigationGlyph.ARTIST),
-    )
+    ).filter { (tab, _, _) ->
+        (tab != FeedTab.WAVE || Appearance.showWaveTab) && (tab != FeedTab.ARTISTS || Appearance.showArtistsTab)
+    }
+    val barHeight = when (Appearance.navSize) {
+        "compact" -> if (Appearance.navLabels == "all") 64.dp else 56.dp
+        "large" -> 76.dp
+        else -> 64.dp
+    }
+    val barRadius = when (Appearance.navShape) { "square" -> 10.dp; "soft" -> 22.dp; else -> barHeight / 2 }
+    val floating = Appearance.navFloating
+    val barShape = if (floating) RoundedCornerShape(barRadius) else RoundedCornerShape(topStart = barRadius, topEnd = barRadius)
+    val thumbHeight = barHeight - 12.dp
+    val thumbShape = RoundedCornerShape((barRadius - 6.dp).coerceAtLeast(4.dp))
     // Settings live inside «Моё»; the bar keeps highlighting the library while they are open.
     val shown = if (selected == FeedTab.SETTINGS) FeedTab.LIKES else selected
     val totalWeight = items.size + 2f
@@ -326,14 +338,14 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 
     Box(
         Modifier.fillMaxWidth().navigationBarsPadding()
-            .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+            .padding(start = if (floating) 16.dp else 0.dp, end = if (floating) 16.dp else 0.dp, bottom = if (floating) 10.dp else 0.dp),
     ) {
         BoxWithConstraints(
-            Modifier.fillMaxWidth().height(64.dp)
+            Modifier.fillMaxWidth().height(barHeight)
                 .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
-                .clip(RoundedCornerShape(32.dp))
+                .clip(barShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(32.dp))
+                .border(if (floating) 1.dp else 0.dp, MaterialTheme.colorScheme.outlineVariant, barShape)
                 .draggable(
                     state = rememberDraggableState { delta ->
                         val unitPx = trackWidthPx / totalWeight
@@ -373,12 +385,12 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
             Box(
                 Modifier.align(Alignment.CenterStart)
                     .offset { androidx.compose.ui.unit.IntOffset(visualStartPx.roundToInt(), 0) }
-                    .width(indicatorWidth).height(52.dp)
+                    .width(indicatorWidth).height(thumbHeight)
                     .graphicsLayer {
                         scaleX = thumbScale
                         scaleY = thumbScale
                     }
-                    .clip(RoundedCornerShape(26.dp))
+                    .clip(thumbShape)
                     .background(Silver),
             )
             Row(Modifier.fillMaxSize().selectableGroup()) {
@@ -413,14 +425,27 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
                             .semantics { contentDescription = label },
                         contentAlignment = Alignment.Center,
                     ) {
-                        NavigationGlyphIcon(
-                            glyph,
-                            tint,
-                            Modifier.graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                            },
-                        )
+                        val iconModifier = Modifier.graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                        }
+                        when {
+                            Appearance.navLabels == "all" -> Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(1.dp),
+                            ) {
+                                NavigationGlyphIcon(glyph, tint, iconModifier)
+                                Text(label, fontSize = 10.sp, color = tint, maxLines = 1, softWrap = false)
+                            }
+                            Appearance.navLabels == "active" && active -> Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                NavigationGlyphIcon(glyph, tint, iconModifier)
+                                Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = tint, maxLines = 1, softWrap = false)
+                            }
+                            else -> NavigationGlyphIcon(glyph, tint, iconModifier)
+                        }
                     }
                 }
             }
@@ -724,6 +749,34 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Switch(Appearance.lyricsAnimated, onCheckedChange = { Appearance.setLyricsAnimated(appearanceContext, it) },
                     colors = vinylSwitchColors())
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Шрифт", style = MaterialTheme.typography.titleSmall)
+            ChoiceChips(Appearance.fonts, Appearance.fontId) { Appearance.setFont(appearanceContext, it) }
+            Text("Размер текста", style = MaterialTheme.typography.titleSmall)
+            ChoiceChips(
+                listOf(0.88f to "Мелкий", 1f to "Обычный", 1.15f to "Крупный", 1.3f to "Огромный"),
+                Appearance.fontScale,
+            ) { Appearance.setFontScale(appearanceContext, it) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Нижняя панель", style = MaterialTheme.typography.titleSmall)
+            Text("Подписи вкладок", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ChoiceChips(listOf("none" to "Нет", "active" to "У активной", "all" to "У всех"), Appearance.navLabels) { Appearance.setNavLabels(appearanceContext, it) }
+            Text("Высота", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ChoiceChips(listOf("compact" to "Низкая", "normal" to "Обычная", "large" to "Высокая"), Appearance.navSize) { Appearance.setNavSize(appearanceContext, it) }
+            Text("Форма", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ChoiceChips(listOf("round" to "Капсула", "soft" to "Скруглённая", "square" to "Прямоугольная"), Appearance.navShape) { Appearance.setNavShape(appearanceContext, it) }
+            ToggleRow("Плавающая панель", "Выключено — панель прижата к краям экрана", Appearance.navFloating) { Appearance.setNavFloating(appearanceContext, it) }
+            ToggleRow("Вкладка «Волна»", null, Appearance.showWaveTab) { Appearance.setShowWaveTab(appearanceContext, it) }
+            ToggleRow("Вкладка «Артисты»", null, Appearance.showArtistsTab) { Appearance.setShowArtistsTab(appearanceContext, it) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Списки треков", style = MaterialTheme.typography.titleSmall)
+            ToggleRow("Обложки", null, Appearance.showCovers) { Appearance.setShowCovers(appearanceContext, it) }
+            ToggleRow("Формат, длительность, источник", "Третья строка под названием трека", Appearance.showTrackDetails) { Appearance.setShowTrackDetails(appearanceContext, it) }
+            ToggleRow("Компактные карточки", null, Appearance.compactCards) { Appearance.setCompactCards(appearanceContext, it) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Общее", style = MaterialTheme.typography.titleSmall)
+            ToggleRow("Чёрный фон", "Чистый чёрный вместо тёмно-серого, экономит заряд на OLED", Appearance.blackBackground) { Appearance.setBlackBackground(appearanceContext, it) }
+            ToggleRow("Анимации интерфейса", "Пружинки панели, переходы и эффекты", Appearance.uiAnimations) { Appearance.setUiAnimations(appearanceContext, it) }
         }
 
         SettingsGroup("Перенос музыки") {
@@ -1077,5 +1130,26 @@ internal fun VpnSwitchRow(title: String, caption: String, checked: Boolean, onCh
             if (caption.isNotBlank()) Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun <T> ChoiceChips(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        options.forEach { (value, label) ->
+            androidx.compose.material3.FilterChip(selected = value == selected, onClick = { onSelect(value) }, label = { Text(label) })
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, caption: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            if (caption != null) Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked, onCheckedChange = onChange, colors = vinylSwitchColors())
     }
 }

@@ -5,6 +5,11 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Density
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -51,10 +56,27 @@ fun MusicdlTheme(content: @Composable () -> Unit) {
     // Monochrome by default; the user may pick an accent colour (or wallpaper colours) in Settings.
     val context = androidx.compose.ui.platform.LocalContext.current
     val scheme = Appearance.appScheme(context)
-    MaterialExpressiveTheme(
-        colorScheme = scheme,
-        motionScheme = MotionScheme.expressive(),
-        shapes = XxwShapes,
-        content = content,
-    )
+    val base = LocalDensity.current
+    val typography = Appearance.fontFamily?.let { Typography().withFamily(it) } ?: Typography()
+    CompositionLocalProvider(LocalDensity provides Density(base.density, base.fontScale * Appearance.fontScale)) {
+        MaterialExpressiveTheme(
+            colorScheme = scheme,
+            motionScheme = MotionScheme.expressive(),
+            shapes = XxwShapes,
+            typography = typography,
+            content = content,
+        )
+    }
 }
+
+/** Every base style switched to one family; sizes and weights stay Material's. */
+private fun Typography.withFamily(f: FontFamily) = copy(
+    displayLarge = displayLarge.copy(fontFamily = f), displayMedium = displayMedium.copy(fontFamily = f),
+    displaySmall = displaySmall.copy(fontFamily = f), headlineLarge = headlineLarge.copy(fontFamily = f),
+    headlineMedium = headlineMedium.copy(fontFamily = f), headlineSmall = headlineSmall.copy(fontFamily = f),
+    titleLarge = titleLarge.copy(fontFamily = f), titleMedium = titleMedium.copy(fontFamily = f),
+    titleSmall = titleSmall.copy(fontFamily = f), bodyLarge = bodyLarge.copy(fontFamily = f),
+    bodyMedium = bodyMedium.copy(fontFamily = f), bodySmall = bodySmall.copy(fontFamily = f),
+    labelLarge = labelLarge.copy(fontFamily = f), labelMedium = labelMedium.copy(fontFamily = f),
+    labelSmall = labelSmall.copy(fontFamily = f),
+)

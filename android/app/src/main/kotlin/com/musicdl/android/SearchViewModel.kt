@@ -144,7 +144,7 @@ data class MusicUiState(
     val isLyricsLoading: Boolean = false,
     val lyricsError: String? = null,
 ) {
-    val allSourcesSelected: Boolean get() = activeSources.size >= MusicClientRegistry.registeredModules.size
+    val allSourcesSelected: Boolean get() = activeSources.size >= ALL_SOURCES.size
 }
 
 enum class FeedTab { SEARCH, WAVE, LIKES, ARTISTS, SETTINGS }
@@ -627,7 +627,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectAllSources() {
-        val all = MusicClientRegistry.registeredModules
+        val all = ALL_SOURCES
         library.activeSources = all
         _state.update { it.copy(activeSources = all) }
     }

@@ -149,6 +149,12 @@ import com.musicdl.core.source.MusicClientRegistry
 fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     androidx.activity.compose.BackHandler(enabled = state.openCollection != null) { viewModel.closeCollection() }
+    // A tab the user hid in Appearance must not stay open.
+    LaunchedEffect(Appearance.showWaveTab, Appearance.showArtistsTab, state.tab) {
+        if ((state.tab == FeedTab.WAVE && !Appearance.showWaveTab) || (state.tab == FeedTab.ARTISTS && !Appearance.showArtistsTab)) {
+            viewModel.setTab(FeedTab.SEARCH)
+        }
+    }
     val snackbarHost = remember { SnackbarHostState() }
     // One lookup table instead of a linear scan of the download index for every visible card.
     val downloadsByKey = remember(state.downloads) { state.downloads.associateBy { it.key } }
@@ -665,7 +671,7 @@ private fun SourcesDialog(
                         Text("Авто · ${RECOMMENDED_SOURCES.size}")
                     }
                     FilledTonalButton(onClick = onAll, shape = MaterialTheme.shapes.small) {
-                        Text("Все ${MusicClientRegistry.registeredModules.size}")
+                        Text("Все ${ALL_SOURCES.size}")
                     }
                 }
                 Text(
@@ -681,7 +687,7 @@ private fun SourcesDialog(
                     modifier = Modifier.heightIn(max = 320.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    items(MusicClientRegistry.registeredModules.sortedBy { sourceName(it) }, key = { it }) { source ->
+                    items(ALL_SOURCES.sortedBy { sourceName(it) }, key = { it }) { source ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1178,12 +1184,12 @@ private fun SongCard(
             .clickable(onClick = onPlay),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = if (Appearance.compactCards) 5.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
+            if (Appearance.showCovers) Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(if (Appearance.compactCards) 44.dp else 54.dp)
                     .clip(MaterialTheme.shapes.medium)
                     .background(
                         Brush.linearGradient(
@@ -1204,7 +1210,7 @@ private fun SongCard(
                     )
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            if (Appearance.showCovers) Spacer(Modifier.width(12.dp)) else Spacer(Modifier.width(6.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = song.songName ?: "Без названия",
@@ -1220,7 +1226,7 @@ private fun SongCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
+                if (Appearance.showTrackDetails) Text(
                     text = listOfNotNull(
                         (song.ext ?: "?").uppercase(),
                         song.duration.takeIf { it != "-:-:-" },

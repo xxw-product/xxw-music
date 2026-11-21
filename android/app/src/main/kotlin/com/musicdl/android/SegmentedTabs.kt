@@ -47,8 +47,7 @@ internal fun SegmentedTabs(options: List<Triple<String, Boolean, () -> Unit>>, m
     Row(
         modifier
             .then(
-                if (glass) Modifier.glassSurface(CircleShape, container, true)
-                else Modifier.clip(CircleShape).background(container).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                Modifier.glassOutline(CircleShape, glass),
             )
             .horizontalScroll(rememberScrollState())
             .padding(4.dp)

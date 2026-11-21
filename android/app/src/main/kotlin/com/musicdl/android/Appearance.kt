@@ -74,6 +74,8 @@ object Appearance {
     var glassMini by mutableStateOf(true); private set
     var glassCards by mutableStateOf(false); private set
     var glassSearch by mutableStateOf(true); private set
+    /** The bottom bar shrinks to icons while the list scrolls down (Liquid Glass only). */
+    var navCollapse by mutableStateOf(true); private set
     var glassMenus by mutableStateOf(true); private set
     /** Real glass: blurred, refracted backdrop. On by default together with Liquid Glass; heavier on weak phones. */
     var realGlass by mutableStateOf(true); private set
@@ -190,6 +192,7 @@ object Appearance {
     fun setGlassMenus(context: Context, on: Boolean) { glassMenus = on; prefs(context).edit().putBoolean("glass_menus", on).apply() }
     fun setRealGlass(context: Context, on: Boolean) { realGlass = on; prefs(context).edit().putBoolean("glass_real", on).apply() }
     fun setGlassMatte(context: Context, v: Float) { glassMatte = v; prefs(context).edit().putFloat("glass_matte", v).apply() }
+    fun setNavCollapse(context: Context, on: Boolean) { navCollapse = on; prefs(context).edit().putBoolean("nav_collapse", on).apply() }
     fun setGlassSearch(context: Context, on: Boolean) { glassSearch = on; prefs(context).edit().putBoolean("glass_search", on).apply() }
     fun setGlassCards(context: Context, on: Boolean) { glassCards = on; prefs(context).edit().putBoolean("glass_cards", on).apply() }
     fun setNavFloating(context: Context, on: Boolean) { navFloating = on; prefs(context).edit().putBoolean("nav_floating", on).apply() }
@@ -233,6 +236,7 @@ object Appearance {
         glassMini = prefs.getBoolean("glass_mini", true)
         glassCards = prefs.getBoolean("glass_cards", false)
         glassSearch = prefs.getBoolean("glass_search", true)
+        navCollapse = prefs.getBoolean("nav_collapse", true)
         glassMenus = prefs.getBoolean("glass_menus", true)
         realGlass = prefs.getBoolean("glass_real", true)
         glassMatte = prefs.getFloat("glass_matte", 0.25f).coerceIn(0f, 1f)

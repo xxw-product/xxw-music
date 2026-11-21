@@ -275,7 +275,7 @@ private fun NavigationGlyphIcon(glyph: NavigationGlyph, tint: Color, modifier: M
  * and the slots, while a direct drag gesture lets the thumb be pulled between destinations.
  */
 @Composable
-internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
+internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, collapsed: Boolean = false) {
     val items = listOf(
         Triple(FeedTab.WAVE, "Волна", NavigationGlyph.WAVE),
         Triple(FeedTab.SEARCH, "Поиск", NavigationGlyph.SEARCH),
@@ -293,12 +293,17 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
     val floating = Appearance.navFloating
     val glassNav = Appearance.liquidGlass && Appearance.glassNav
     val barShape = if (floating) RoundedCornerShape(barRadius) else RoundedCornerShape(topStart = barRadius, topEnd = barRadius)
-    val thumbHeight = barHeight - 12.dp
     val thumbShape = RoundedCornerShape((barRadius - 6.dp).coerceAtLeast(4.dp))
     // Settings live inside «Моё»; the bar keeps highlighting the library while they are open.
     val shown = if (selected == FeedTab.SETTINGS) FeedTab.LIKES else selected
     val totalWeight = items.size + 2f
     val motion = motionEnabled()
+    val shrink by animateFloatAsState(
+        if (collapsed && glassNav && Appearance.navCollapse) 1f else 0f,
+        if (motion) navigationSpring() else snap(), label = "navigationShrink",
+    )
+    val curHeight = barHeight * (1f - 0.2f * shrink)
+    val thumbHeight = curHeight - 12.dp
     var requestedTab by remember { mutableStateOf(shown) }
     var dragging by remember { mutableStateOf(false) }
     var trackWidthPx by remember { mutableFloatStateOf(0f) }
@@ -339,10 +344,12 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 
     Box(
         Modifier.fillMaxWidth().navigationBarsPadding()
-            .padding(start = if (floating) 16.dp else 0.dp, end = if (floating) 16.dp else 0.dp, bottom = if (floating) 10.dp else 0.dp),
+            .padding(start = if (floating) 16.dp else 0.dp, end = if (floating) 16.dp else 0.dp, bottom = if (floating) 10.dp else 0.dp)
+            .height(barHeight),
+        contentAlignment = Alignment.BottomCenter,
     ) {
         BoxWithConstraints(
-            Modifier.fillMaxWidth().height(barHeight)
+            Modifier.fillMaxWidth(1f - 0.26f * shrink).height(curHeight)
                 .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
                 .clip(barShape)
                 .then(
@@ -436,14 +443,14 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
                             scaleY = scale
                         }
                         when {
-                            Appearance.navLabels == "all" -> Column(
+                            Appearance.navLabels == "all" && shrink < 0.5f -> Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(1.dp),
                             ) {
                                 NavigationGlyphIcon(glyph, tint, iconModifier)
                                 Text(label, fontSize = 10.sp, color = tint, maxLines = 1, softWrap = false)
                             }
-                            Appearance.navLabels == "active" && active -> Row(
+                            Appearance.navLabels == "active" && active && shrink < 0.5f -> Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
@@ -821,6 +828,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Slider(Appearance.glassMatte, { Appearance.setGlassMatte(appearanceContext, it) }, valueRange = 0f..1f,
                     colors = SliderDefaults.colors(thumbColor = Silver, activeTrackColor = Silver, inactiveTrackColor = Color(0xFF3A3D44)))
                 ToggleRow("Нижняя панель", null, Appearance.glassNav) { Appearance.setGlassNav(appearanceContext, it) }
+                ToggleRow("Сворачивать при прокрутке", "Панель уменьшается до значков, пока лента едет вниз", Appearance.navCollapse) { Appearance.setNavCollapse(appearanceContext, it) }
                 ToggleRow("Строка поиска и вкладки", null, Appearance.glassSearch) { Appearance.setGlassSearch(appearanceContext, it) }
                 ToggleRow("Мини-плеер", null, Appearance.glassMini) { Appearance.setGlassMini(appearanceContext, it) }
                 ToggleRow("Меню и действия", "Компактные всплывающие меню вместо шторок", Appearance.glassMenus) { Appearance.setGlassMenus(appearanceContext, it) }

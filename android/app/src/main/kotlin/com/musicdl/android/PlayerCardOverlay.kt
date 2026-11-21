@@ -75,7 +75,7 @@ internal fun PlayerCardOverlay(onClosed: () -> Unit, content: @Composable (() ->
         }
     }
 
-    Dialog(onDismissRequest = requestClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = requestClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         // Draw the scrim with the card so it fades continuously, without a second window animation.
         DisposableEffect(window) {
@@ -83,6 +83,10 @@ internal fun PlayerCardOverlay(onClosed: () -> Unit, content: @Composable (() ->
             val previousAnimation = window?.attributes?.windowAnimations ?: 0
             window?.setDimAmount(0f)
             window?.setWindowAnimations(0)
+            // Cover the whole screen, including the area under the system navigation bar.
+            window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+            window?.navigationBarColor = android.graphics.Color.TRANSPARENT
+            if (android.os.Build.VERSION.SDK_INT >= 29) window?.isNavigationBarContrastEnforced = false
             onDispose {
                 window?.setDimAmount(previousDim)
                 window?.setWindowAnimations(previousAnimation)

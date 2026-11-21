@@ -125,6 +125,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -331,6 +332,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
             ),
     ) {
         val glassBackdrop = rememberGlassBackdrop()
+        var navCollapsed by remember { mutableStateOf(false) }
         val realGlass = Appearance.realGlassActive
         Scaffold(
             containerColor = Color.Transparent,
@@ -377,11 +379,25 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                             onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
                             onQueue = { showQueue = true })
                     }
-                    AppNavigation(state.tab, viewModel::setTab)
+                    AppNavigation(state.tab, viewModel::setTab, collapsed = navCollapsed)
                 }
             },
         ) { padding ->
             val scrollStates = FeedTab.entries.associateWith { tab -> key(tab) { rememberLazyListState() } }
+            // Like the iOS tab bar: it shrinks to icons while the list scrolls down and returns on the way back up.
+            val activeList = scrollStates.getValue(state.tab)
+            LaunchedEffect(activeList) {
+                navCollapsed = false
+                var lastIndex = activeList.firstVisibleItemIndex
+                var lastOffset = activeList.firstVisibleItemScrollOffset
+                snapshotFlow { activeList.firstVisibleItemIndex to activeList.firstVisibleItemScrollOffset }.collect { (index, offset) ->
+                    val delta = (index - lastIndex) * 1000 + (offset - lastOffset)
+                    if (index == 0 && offset < 40) navCollapsed = false
+                    else if (delta > 24) navCollapsed = true
+                    else if (delta < -24) navCollapsed = false
+                    lastIndex = index; lastOffset = offset
+                }
+            }
             LazyColumn(
                 state = scrollStates.getValue(state.tab),
                 modifier = Modifier
@@ -643,8 +659,8 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
     val searchShape = if (glassSearch) CircleShape else MaterialTheme.shapes.medium
     Surface(
         shape = searchShape,
-        color = if (glassSearch) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth().glassSurface(searchShape, MaterialTheme.colorScheme.surfaceContainerHigh, glassSearch),
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth().glassOutline(searchShape, glassSearch),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextField(
@@ -684,7 +700,7 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
                 modifier = Modifier
                     .padding(end = 8.dp)
                     .size(48.dp),
-                shape = MaterialTheme.shapes.small,
+                shape = CircleShape,
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,

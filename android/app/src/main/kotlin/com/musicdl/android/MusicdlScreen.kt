@@ -1246,11 +1246,10 @@ private fun SongCard(
     } else {
         MaterialTheme.colorScheme.surfaceContainerLow
     }
-    val coverFallbackBrush = remember(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary) {
-        Brush.linearGradient(listOf(
-            Color(MaterialTheme.colorScheme.primary.value).copy(alpha = 0.85f),
-            Color(MaterialTheme.colorScheme.tertiary.value).copy(alpha = 0.7f),
-        ))
+    val primary = MaterialTheme.colorScheme.primary
+    val tertiary = MaterialTheme.colorScheme.tertiary
+    val coverFallbackBrush = remember(primary, tertiary) {
+        Brush.linearGradient(listOf(primary.copy(alpha = 0.85f), tertiary.copy(alpha = 0.7f)))
     }
     val glassCard = Appearance.liquidGlass && Appearance.glassCards
     Surface(

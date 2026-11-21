@@ -124,6 +124,7 @@ internal class PlayerHooks(
     val onOpenQueue: () -> Unit,
     val onOpenActions: () -> Unit,
     val onToggleLyrics: () -> Unit,
+    val onArtist: () -> Unit,
 ) {
     val onAccent: Color get() = if (accent.luminance() > 0.5f) Color.Black else Color.White
     val playing get() = state.player.isPlaying
@@ -289,7 +290,7 @@ private fun YandexBody(h: PlayerHooks) {
         }
         Column(Modifier.weight(1f)) {
             Text(h.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(h.artist, color = muted, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(h.artist, color = muted, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(onClick = h.onArtist))
         }
         Glyph(Icons.Rounded.PlaylistAdd, "В плейлист", h.onAddToPlaylist)
         Glyph(Icons.Rounded.MoreVert, "Действия с треком", h.onOpenActions)
@@ -327,7 +328,7 @@ private fun SpotifyBody(h: PlayerHooks) {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(h.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(h.artist, color = PlayerInk.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(h.artist, color = PlayerInk.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(onClick = h.onArtist))
         }
         Glyph(Icons.Rounded.Close, "Реже", h.onDislike, size = 28.dp)
         Glyph(if (h.liked) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, "Нравится", h.onLike, size = 30.dp,
@@ -374,7 +375,7 @@ private fun AppleBody(h: PlayerHooks) {
     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(h.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(h.artist, fontSize = 20.sp, color = tint.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(h.artist, fontSize = 20.sp, color = tint.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(onClick = h.onArtist))
         }
         Glyph(if (h.liked) Icons.Rounded.Star else Icons.Rounded.StarBorder, "Нравится", h.onLike, size = 28.dp)
         Surface(onClick = h.onOpenActions, shape = CircleShape, color = Color.White.copy(alpha = 0.2f),
@@ -432,7 +433,7 @@ private fun AppleLyricsHeader(h: PlayerHooks) {
         }
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(h.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(h.artist, fontSize = 16.sp, color = Color.White.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(h.artist, fontSize = 16.sp, color = Color.White.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(onClick = h.onArtist))
         }
         Surface(onClick = h.onLike, shape = CircleShape, color = Color.White.copy(alpha = 0.2f),
             modifier = Modifier.size(34.dp).semantics { contentDescription = "Нравится" }) {

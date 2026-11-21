@@ -83,6 +83,8 @@ data class MusicUiState(
     val searchKind: SearchKind = SearchKind.TRACKS,
     val collections: List<com.musicdl.core.source.MusicCollection> = emptyList(),
     val artistHits: List<ArtistPhotos.Hit> = emptyList(),
+    /** Track whose several artists the user must pick from (follow / open). */
+    val artistPicker: SongInfo? = null,
     val openCollection: com.musicdl.core.source.MusicCollection? = null,
     val collectionTracks: List<SongInfo> = emptyList(),
     val isCollectionLoading: Boolean = false,
@@ -327,6 +329,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             val playlists = library.playlists()
             val likes = library.likes()
             val history = library.history()
+            // Credits saved earlier as one entry ("Баста, Guf") become separate subscriptions.
+            library.followedArtists().filter { ArtistNames.split(it).size > 1 }.forEach { combined ->
+                library.toggleFollowArtist(combined)
+                ArtistNames.split(combined).forEach { part -> if (!library.isFollowing(part)) library.toggleFollowArtist(part) }
+            }
             val followedArtists = library.followedArtists()
             val restoredWave = library.lastWave().filter { it.source in ALL_SOURCES || library.localFileFor(it) != null }
             val restoredResults = library.lastResults().filter { it.source in ALL_SOURCES }
@@ -1551,15 +1558,34 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Follow / unfollow the artist of a track; returns the subscription list to the UI. */
     fun toggleFollow(song: SongInfo) {
-        val artist = song.singers?.trim().orEmpty()
-        if (artist.isEmpty() || artist == "NULL") {
-            _messages.tryEmit("У трека нет исполнителя")
-            return
+        val artists = ArtistNames.split(song.singers)
+        when {
+            artists.isEmpty() -> _messages.tryEmit("У трека нет исполнителя")
+            // Several artists are never saved as one entry: the user picks whom to follow.
+            artists.size > 1 -> _state.update { it.copy(artistPicker = song) }
+            else -> toggleFollowName(artists.first())
         }
+    }
+
+    /** Follows or unfollows exactly this artist name. */
+    fun toggleFollowName(name: String) {
+        val artist = name.trim().takeIf { it.isNotEmpty() } ?: return
         val following = library.toggleFollowArtist(artist)
         _state.update { it.copy(followedArtists = library.followedArtists()) }
         if (following) syncArtistPhotos()
         _messages.tryEmit(if (following) "Подписка: $artist" else "Отписка: $artist")
+    }
+
+    fun openArtistPicker(song: SongInfo) = _state.update { it.copy(artistPicker = song) }
+    fun closeArtistPicker() = _state.update { it.copy(artistPicker = null) }
+
+    /** Finds the track's album through the album search. */
+    fun searchAlbumOf(song: SongInfo) {
+        val album = song.album?.trim().orEmpty().takeIf { it.isNotEmpty() } ?: return
+        val artist = ArtistNames.split(song.singers).firstOrNull().orEmpty()
+        _state.update { it.copy(artistPicker = null, keyword = "$album $artist".trim(), searchKind = SearchKind.ALBUMS, searchArtistOnly = false) }
+        setTab(FeedTab.SEARCH)
+        search()
     }
 
     fun unfollowArtist(name: String) {

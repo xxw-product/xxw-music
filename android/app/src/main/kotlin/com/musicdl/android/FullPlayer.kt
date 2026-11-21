@@ -73,7 +73,7 @@ internal fun FullPlayer(
     onDeleteDownload: () -> Unit, onFollow: () -> Unit, onLoadLyrics: () -> Unit, onShuffle: () -> Unit,
     onRepeat: () -> Unit, onSpeed: () -> Unit, onAddToPlaylist: () -> Unit,
     onPlayNext: () -> Unit, onAddToQueue: () -> Unit, onOpenQueue: () -> Unit,
-    onOpenClips: () -> Unit, onOpenActions: () -> Unit,
+    onOpenClips: () -> Unit, onOpenActions: () -> Unit, onOpenArtist: () -> Unit = {},
 ) {
     val song = state.player.song ?: return
     // The bar follows its own flow, so a position tick no longer recomposes the whole screen.
@@ -146,7 +146,7 @@ internal fun FullPlayer(
         onClose = onClose, onPlayPause = onPlayPause, onNext = onNext, onPrevious = onPrevious, onSeek = onSeek,
         onLike = onLike, onDislike = onDislike, onShuffle = onShuffle, onRepeat = onRepeat, onSpeed = onSpeed,
         onAddToPlaylist = onAddToPlaylist, onOpenQueue = onOpenQueue, onOpenActions = onOpenActions,
-        onToggleLyrics = { lyricsMode = !lyricsMode },
+        onToggleLyrics = { lyricsMode = !lyricsMode }, onArtist = onOpenArtist,
     )
     androidx.compose.material3.MaterialExpressiveTheme(
         colorScheme = if (expressive) scheme else MaterialTheme.colorScheme,
@@ -255,7 +255,7 @@ internal fun FullPlayer(
                             style = if (expressive) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(song.singers.orEmpty(), color = PlayerMuted, style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clickable(onClick = onOpenArtist))
                     }
                     if (!expressive) IconButton(onClick = onDislike) { Icon(Icons.Rounded.ThumbDown, "Реже", Modifier.size(22.dp), tint = PlayerMuted) }
                     IconButton(onClick = onLike) {

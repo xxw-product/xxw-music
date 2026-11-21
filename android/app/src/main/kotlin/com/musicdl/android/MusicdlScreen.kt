@@ -203,8 +203,33 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 onOpenQueue = { showQueue = true },
                 onOpenClips = { showFullPlayer = false; viewModel.openClips() },
                 onOpenActions = { actionsSong = state.player.song },
+                onOpenArtist = {
+                    val song = state.player.song
+                    val artists = ArtistNames.split(song?.singers)
+                    when {
+                        song == null || artists.isEmpty() -> Unit
+                        artists.size == 1 -> { showFullPlayer = false; viewModel.setTab(FeedTab.ARTISTS); viewModel.openArtist(artists.first()) }
+                        else -> viewModel.openArtistPicker(song)
+                    }
+                },
             )
         }
+    }
+
+    state.artistPicker?.let { song ->
+        ArtistPickerSheet(
+            song = song,
+            followed = state.followedArtists,
+            onDismiss = viewModel::closeArtistPicker,
+            onOpen = { name ->
+                viewModel.closeArtistPicker()
+                showFullPlayer = false
+                viewModel.setTab(FeedTab.ARTISTS)
+                viewModel.openArtist(name)
+            },
+            onFollow = viewModel::toggleFollowName,
+            onAlbum = { showFullPlayer = false; viewModel.searchAlbumOf(song) },
+        )
     }
 
     actionsSong?.let { track ->
@@ -413,7 +438,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                                 loading = state.isArtistLoading,
                                 onBack = viewModel::closeArtist,
                                 onRefresh = { viewModel.openArtist(artist) },
-                                onUnfollow = { viewModel.toggleFollow(SongInfo(singers = artist)) },
+                                onUnfollow = { viewModel.toggleFollowName(artist) },
                             )
                         }
                         if (state.isArtistLoading && state.artistTracks.isEmpty()) {
@@ -550,7 +575,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                                             hit = hit,
                                             following = state.followedArtists.any { it.equals(hit.name, ignoreCase = true) },
                                             onOpen = { viewModel.setTab(FeedTab.ARTISTS); viewModel.openArtist(hit.name) },
-                                            onFollow = { viewModel.toggleFollow(SongInfo(singers = hit.name)) },
+                                            onFollow = { viewModel.toggleFollowName(hit.name) },
                                         )
                                     }
                                 }
@@ -1348,8 +1373,57 @@ private fun HistoryRow(
 
 /** The person icon on a card: is this track's artist already followed? */
 private fun MusicUiState.isFollowedBy(song: SongInfo): Boolean {
-    val artist = song.singers?.trim().orEmpty()
-    return artist.isNotEmpty() && followedArtists.any { it.equals(artist, ignoreCase = true) }
+    return ArtistNames.split(song.singers).any { artist -> followedArtists.any { it.equals(artist, ignoreCase = true) } }
+}
+
+/** The artists of a multi-artist track: open one, follow one, or jump to the album. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ArtistPickerSheet(
+    song: SongInfo,
+    followed: List<String>,
+    onDismiss: () -> Unit,
+    onOpen: (String) -> Unit,
+    onFollow: (String) -> Unit,
+    onAlbum: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            ArtistNames.split(song.singers).forEach { name ->
+                val following = followed.any { it.equals(name, ignoreCase = true) }
+                Row(
+                    Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable { onOpen(name) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ArtistAvatar(name, 64.dp)
+                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                        Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Исполнитель", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (following) {
+                        FilledTonalButton(onClick = { onFollow(name) }) { Text("Подписан", maxLines = 1, softWrap = false) }
+                    } else {
+                        OutlinedButton(onClick = { onFollow(name) }) { Text("Подписаться", maxLines = 1, softWrap = false) }
+                    }
+                }
+            }
+            if (!song.album.isNullOrBlank()) {
+                Row(
+                    Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onAlbum),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
+                        CoverImage(url = song.coverUrl, modifier = Modifier.fillMaxSize()) {}
+                    }
+                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                        Text(song.album.orEmpty(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Альбом", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(Icons.Rounded.Search, contentDescription = "Найти альбом", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
 }
 
 @Composable

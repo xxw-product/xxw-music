@@ -88,42 +88,26 @@ internal fun Modifier.glassSurface(
 }
 
 private fun Modifier.softGlass(shape: Shape, base: Color, opacity: Float): Modifier {
-    val s = Appearance.glassStrength
     val matte = Appearance.glassMatte
     return this
         .clip(shape)
-        .background(base.copy(alpha = (opacity - (s - 1f) * 0.18f + (matte - 0.35f) * 0.6f).coerceIn(0.2f, 0.97f)))
+        .background(base.copy(alpha = (opacity + (matte - 0.35f) * 0.6f).coerceIn(0.2f, 0.97f)))
         .drawWithContent {
             drawContent()
-            drawGlassRim(shape, s)
+            drawGlassRim(shape)
         }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGlassRim(shape: Shape, s: Float) {
-    val outline = shape.createOutline(size, layoutDirection, this)
-    drawOutline(
-        outline,
-        Brush.verticalGradient(
-            0f to Color.White.copy(alpha = (0.20f * s).coerceAtMost(0.5f)),
-            0.45f to Color.White.copy(alpha = 0.03f * s),
-            1f to Color.White.copy(alpha = 0.08f * s),
-        ),
-    )
-    drawOutline(
-        outline,
-        Brush.linearGradient(
-            0f to Color.White.copy(alpha = (0.75f * s).coerceAtMost(0.95f)),
-            0.35f to Color.White.copy(alpha = 0.10f),
-            0.65f to Color.White.copy(alpha = 0.04f),
-            1f to Color.White.copy(alpha = (0.42f * s).coerceAtMost(0.8f)),
-            start = Offset.Zero, end = Offset(size.width, size.height),
-        ),
-        style = Stroke(2.dp.toPx()),
-    )
+/** Only a hairline edge: no glow or sheen. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGlassRim(shape: Shape) {
+    drawOutline(shape.createOutline(size, layoutDirection, this), Color.White.copy(alpha = 0.14f), style = Stroke(1.dp.toPx()))
 }
 
 private class EffectCache {
-    var key: List<Float>? = null
+    var w = 0
+    var h = 0
+    var radius = -1f
+    var blur = -1f
     var shader: RuntimeShader? = null
 }
 
@@ -149,17 +133,9 @@ half4 main(float2 coord) {
                                 sdf(p + float2(0.0, 1.0)) - sdf(p - float2(0.0, 1.0))) + 0.00001);
     float bend = t * t * depth * strength;
     float2 uv = coord - n * bend;
-    float2 o = n * bend * 0.12;
     float2 lo = float2(0.5);
     float2 hi = size - float2(0.5);
-    half r = content.eval(clamp(uv - o, lo, hi)).r;
-    half g = content.eval(clamp(uv, lo, hi)).g;
-    half b = content.eval(clamp(uv + o, lo, hi)).b;
-    half3 c = half3(r, g, b);
-    float l1 = max(dot(n, normalize(float2(-0.55, -0.83))), 0.0);
-    float l2 = max(dot(n, normalize(float2(0.55, 0.83))), 0.0);
-    float rim = pow(t, 3.0) * (l1 + 0.4 * l2) * 0.55 * strength;
-    c += half3(rim);
+    half3 c = content.eval(clamp(uv, lo, hi)).rgb;
     return half4(c, 1.0);
 }
 """
@@ -177,8 +153,7 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
             val w = size.width.roundToInt().coerceAtLeast(1)
             val h = size.height.roundToInt().coerceAtLeast(1)
             val matte = Appearance.glassMatte
-            val s = Appearance.glassStrength
-            val blurPx = (1.5f + 22f * matte).dp.toPx()
+            val blurPx = (1.5f + 16f * matte).dp.toPx()
             val outline = shape.createOutline(size, layoutDirection, this)
             val radius = (outline as? Outline.Rounded)?.roundRect?.topLeftCornerRadius?.x ?: 0f
             val depth = minOf(size.height / 2f, 26.dp.toPx())
@@ -188,15 +163,14 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
                 drawRect(base.copy(alpha = 0.6f))
                 translate(dx, dy) { drawLayer(backdrop.layer) }
             }
-            val key = listOf(w.toFloat(), h.toFloat(), radius, depth, blurPx, s)
-            if (cache.key != key) {
-                cache.key = key
+            if (cache.w != w || cache.h != h || cache.radius != radius || cache.blur != blurPx) {
+                cache.w = w; cache.h = h; cache.radius = radius; cache.blur = blurPx
                 glassLayer.renderEffect = if (Build.VERSION.SDK_INT >= 33) {
                     val shader = cache.shader ?: RuntimeShader(GLASS_AGSL).also { cache.shader = it }
                     shader.setFloatUniform("size", w.toFloat(), h.toFloat())
                     shader.setFloatUniform("radius", radius)
                     shader.setFloatUniform("depth", depth)
-                    shader.setFloatUniform("strength", s)
+                    shader.setFloatUniform("strength", 1f)
                     val refract = android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "content")
                     val blur = android.graphics.RenderEffect.createBlurEffect(blurPx, blurPx, android.graphics.Shader.TileMode.CLAMP)
                     android.graphics.RenderEffect.createChainEffect(refract, blur).asComposeRenderEffect()
@@ -207,7 +181,7 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
             drawLayer(glassLayer)
             // Frosting: the matte end of the slider lays a stronger tint over the blur.
             drawRect(base.copy(alpha = (0.02f + 0.5f * matte).coerceAtMost(0.75f)))
-            drawGlassRim(shape, s)
+            drawGlassRim(shape)
             drawContent()
         }
 }

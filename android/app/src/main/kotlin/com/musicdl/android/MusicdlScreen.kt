@@ -1115,9 +1115,10 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
     )
     val progress = (-pull / maxPull).coerceIn(0f, 1f)
     val glassMini = Appearance.liquidGlass && Appearance.glassMini
-    Surface(color = if (glassMini) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth()
-            .glassSurface(MaterialTheme.shapes.medium, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini, real = true)
+    val miniShape = if (glassMini) CircleShape else MaterialTheme.shapes.medium
+    Surface(color = if (glassMini) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh, shape = miniShape,
+        modifier = Modifier.padding(horizontal = if (glassMini) 16.dp else 12.dp, vertical = 4.dp).fillMaxWidth()
+            .glassSurface(miniShape, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini, real = true)
             .graphicsLayer {
                 translationY = pull * 0.45f
                 scaleX = 1f + 0.035f * progress
@@ -1135,7 +1136,19 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
                 },
             )
             .clickable(onClick = onOpen)) {
-        Column {
+        if (glassMini) Row(Modifier.padding(start = 9.dp, end = 6.dp).height(64.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+                CoverImage(song.coverUrl, Modifier.fillMaxSize()) { Icon(Icons.Rounded.MusicNote, null) }
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(song.songName ?: "Без названия", modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(song.singers.orEmpty(), modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TransportButton(playing = state.player.isPlaying, buffering = state.player.isBuffering, compact = true, onClick = onPlayPause)
+            TransportButton(direction = 1, compact = true, onClick = onNext)
+        } else Column {
             // Grabber: the visual cue that this card can be pulled up into the full player.
             Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(width = 30.dp, height = 3.dp).clip(CircleShape)

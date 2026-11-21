@@ -1648,9 +1648,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val generation = ++artistGeneration
         _state.update { it.copy(artistFeed = name, artistTracks = emptyList(), isArtistLoading = true) }
         artistJob = viewModelScope.launch {
-            val sources = _state.value.activeSources.filterNot { isPreviewSource(it) }.toSet()
-                .ifEmpty { RECOMMENDED_SOURCES }
-            val client = buildClient(sources)
+            // Artist pages are Deezer-only, whatever sources the search uses.
+            val client = buildClient(setOf("DeezerMusicClient"))
             try {
                 val bySource = client.search(
                     keyword = name,

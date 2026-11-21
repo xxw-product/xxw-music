@@ -90,7 +90,7 @@ fun ArtistHero(
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f))
                 }
             }
-            if (photosOn) CoverImage(profile?.photo ?: saved, Modifier.fillMaxSize()) { initial() } else initial()
+            if (photosOn) CoverImage(profile?.photo ?: saved, Modifier.fillMaxSize(), maxSide = 900) { initial() } else initial()
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 0.62f to background.copy(alpha = 0.55f), 1f to background)))
             RoundIcon(Icons.Rounded.ArrowBack, "Назад", onBack, Modifier.align(Alignment.TopStart).padding(12.dp))
             RoundIcon(Icons.Rounded.Refresh, "Обновить", onRefresh, Modifier.align(Alignment.TopEnd).padding(12.dp))

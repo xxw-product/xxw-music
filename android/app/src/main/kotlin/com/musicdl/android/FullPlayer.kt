@@ -247,7 +247,7 @@ internal fun FullPlayer(
                             }.clip(RoundedCornerShape(coverRadius)).background(Color.Black.copy(alpha = 0.35f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CoverImage(cover, Modifier.fillMaxSize()) {
+                            CoverImage(cover, Modifier.fillMaxSize(), maxSide = 1200) {
                                 Icon(Icons.Rounded.MusicNote, null, Modifier.size(64.dp), tint = PlayerAccent)
                             }
                         }

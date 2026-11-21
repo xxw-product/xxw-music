@@ -202,7 +202,7 @@ private fun MotionClip(coverUrl: String?, song: SongInfo?) {
         label = "clipZoom",
     )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CoverImage(coverUrl, Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom }) {
+        CoverImage(coverUrl, Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom }, maxSide = 1200) {
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(listOf(Color(0xFF1B1D21), Color(0xFF08090B))),

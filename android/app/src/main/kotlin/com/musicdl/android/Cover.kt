@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -28,32 +29,41 @@ object CoverCache {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
-    fun peek(url: String?): Bitmap? = url?.let { synchronized(cache) { cache[it] } }
+    // List rows show a 54 dp square: decoding a 1600 px original for each of them thrashed the cache and made
+    // scrolling stutter, so every caller states how large it really draws the picture.
+    private fun cacheKey(url: String, maxSide: Int) = "$url@$maxSide"
 
-    suspend fun load(url: String?): Bitmap? {
+    // A handful of parallel downloads is plenty; fifty at once starve the UI thread of CPU.
+    private val downloads = kotlinx.coroutines.sync.Semaphore(4)
+
+    fun peek(url: String?, maxSide: Int = 1600): Bitmap? = url?.let { synchronized(cache) { cache[cacheKey(it, maxSide)] } }
+
+    suspend fun load(url: String?, maxSide: Int = 1600): Bitmap? {
         if (url.isNullOrBlank()) return null
-        peek(url)?.let { return it }
+        peek(url, maxSide)?.let { return it }
         val bitmap = withContext(Dispatchers.IO) {
             if (url.startsWith("file:") || url.startsWith("/")) {
-                decodeFile(File(if (url.startsWith("file:")) runCatching { java.net.URI(url).path }.getOrNull().orEmpty() else url))
+                decodeFile(File(if (url.startsWith("file:")) runCatching { java.net.URI(url).path }.getOrNull().orEmpty() else url), maxSide)
             } else {
-                com.musicdl.core.model.ArtworkUrls.candidates(url).firstNotNullOfOrNull { download(it) }
+                downloads.withPermit {
+                    com.musicdl.core.model.ArtworkUrls.candidates(url).firstNotNullOfOrNull { download(it, maxSide) }
+                }
             }
         } ?: return null
-        synchronized(cache) { cache.put(url, bitmap) }
+        synchronized(cache) { cache.put(cacheKey(url, maxSide), bitmap) }
         return bitmap
     }
 
-    private fun decodeFile(file: File): Bitmap? {
+    private fun decodeFile(file: File, maxSide: Int): Bitmap? {
         if (!file.isFile || file.length() <= 0L) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1600) sample *= 2
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
         return BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
-    private fun download(url: String): Bitmap? = runCatching {
+    private fun download(url: String, maxSide: Int): Bitmap? = runCatching {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 6_000
             readTimeout = 8_000
@@ -66,7 +76,7 @@ object CoverCache {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 var sample = 1
-                while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1600) sample *= 2
+                while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
                 BitmapFactory.decodeByteArray(
                     bytes,
                     0,
@@ -158,15 +168,16 @@ object CoverStore {
 
 /** Draws the artwork, or [fallback] (a letter tile / note icon) when there is none. */
 @Composable
-fun CoverImage(url: String?, modifier: Modifier = Modifier, fallback: @Composable () -> Unit) {
-    val bitmap by produceState(initialValue = CoverCache.peek(url), url) {
-        value = CoverCache.peek(url)
-        value = CoverCache.load(url)
+fun CoverImage(url: String?, modifier: Modifier = Modifier, maxSide: Int = 512, fallback: @Composable () -> Unit) {
+    val bitmap by produceState(initialValue = CoverCache.peek(url, maxSide), url, maxSide) {
+        value = CoverCache.peek(url, maxSide)
+        value = CoverCache.load(url, maxSide)
     }
     val image = bitmap
     if (image != null) {
+        val imageBitmap = androidx.compose.runtime.remember(image) { image.asImageBitmap() }
         Image(
-            bitmap = image.asImageBitmap(),
+            bitmap = imageBitmap,
             contentDescription = null,
             modifier = modifier,
             contentScale = ContentScale.Crop,

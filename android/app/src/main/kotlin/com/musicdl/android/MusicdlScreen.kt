@@ -161,8 +161,15 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
     val downloadsByKey = remember(state.downloads) { state.downloads.associateBy { it.key } }
     // The same recording arrives with different provider keys after a re-search or a wave refresh;
     // a plain key lookup made the sheet offer "Скачать" for a track that was already offline.
-    fun downloadedEntry(song: SongInfo): DownloadEntry? = downloadsByKey[song.key()]
-        ?: state.downloads.firstOrNull { sameRecording(it.title, it.artist, song.songName, song.singers) }
+    // The fuzzy fallback scans every download; remember its answer per track until the downloads change.
+    val downloadedCache = remember(state.downloads) { HashMap<String, DownloadEntry?>() }
+    fun downloadedEntry(song: SongInfo): DownloadEntry? {
+        val key = song.key()
+        downloadsByKey[key]?.let { return it }
+        if (downloadedCache.containsKey(key)) return downloadedCache[key]
+        return state.downloads.firstOrNull { sameRecording(it.title, it.artist, song.songName, song.singers) }
+            .also { downloadedCache[key] = it }
+    }
     var showPlaylists by rememberSaveable { mutableStateOf(false) }
     var playlistSong by remember { mutableStateOf<SongInfo?>(null) }
     if (showPlaylists) PlaylistLibrary(state, viewModel, onClose = { showPlaylists = false })
@@ -380,7 +387,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = padding.calculateTopPadding(), bottom = if (realGlass) 0.dp else padding.calculateBottomPadding())
-                    .glassSource(glassBackdrop, realGlass)
+                    .glassSource(glassBackdrop, realGlass, edge = padding.calculateBottomPadding() + 22.dp)
                     .padding(horizontal = 18.dp),
                 contentPadding = PaddingValues(bottom = if (realGlass) padding.calculateBottomPadding() else 0.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -627,15 +634,17 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
             listOf(
                 Triple("Треки", !artistOnly && state.searchKind == SearchKind.TRACKS) { viewModel.setSearchKind(SearchKind.TRACKS) },
                 Triple("Альбомы", state.searchKind == SearchKind.ALBUMS) { viewModel.setSearchKind(SearchKind.ALBUMS) },
+                Triple("Исполнители", artistOnly) { viewModel.setSearchArtistOnly(true) },
                 Triple("Плейлисты", state.searchKind == SearchKind.PLAYLISTS) { viewModel.setSearchKind(SearchKind.PLAYLISTS) },
-                Triple("По исполнителю", artistOnly) { viewModel.setSearchArtistOnly(true) },
             ),
         )
         Spacer(Modifier.height(10.dp))
+    val glassSearch = Appearance.liquidGlass && Appearance.glassSearch
+    val searchShape = if (glassSearch) CircleShape else MaterialTheme.shapes.medium
     Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth(),
+        shape = searchShape,
+        color = if (glassSearch) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().glassSurface(searchShape, MaterialTheme.colorScheme.surfaceContainerHigh, glassSearch),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextField(
@@ -1136,8 +1145,8 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
                 },
             )
             .clickable(onClick = onOpen)) {
-        if (glassMini) Row(Modifier.padding(start = 9.dp, end = 6.dp).height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(46.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+        if (glassMini) Row(Modifier.padding(start = 7.dp, end = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
                 CoverImage(song.coverUrl, Modifier.fillMaxSize()) { Icon(Icons.Rounded.MusicNote, null) }
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
@@ -1237,6 +1246,12 @@ private fun SongCard(
     } else {
         MaterialTheme.colorScheme.surfaceContainerLow
     }
+    val coverFallbackBrush = remember(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary) {
+        Brush.linearGradient(listOf(
+            Color(MaterialTheme.colorScheme.primary.value).copy(alpha = 0.85f),
+            Color(MaterialTheme.colorScheme.tertiary.value).copy(alpha = 0.7f),
+        ))
+    }
     val glassCard = Appearance.liquidGlass && Appearance.glassCards
     Surface(
         shape = MaterialTheme.shapes.large,
@@ -1254,14 +1269,7 @@ private fun SongCard(
                 modifier = Modifier
                     .size(if (Appearance.compactCards) 44.dp else 54.dp)
                     .clip(MaterialTheme.shapes.medium)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f),
-                            ),
-                        ),
-                    ),
+                    .background(coverFallbackBrush),
                 contentAlignment = Alignment.Center,
             ) {
                 CoverImage(url = song.coverUrl, modifier = Modifier.fillMaxSize()) {

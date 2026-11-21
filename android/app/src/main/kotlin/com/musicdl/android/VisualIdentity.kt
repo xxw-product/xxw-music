@@ -821,6 +821,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 Slider(Appearance.glassMatte, { Appearance.setGlassMatte(appearanceContext, it) }, valueRange = 0f..1f,
                     colors = SliderDefaults.colors(thumbColor = Silver, activeTrackColor = Silver, inactiveTrackColor = Color(0xFF3A3D44)))
                 ToggleRow("Нижняя панель", null, Appearance.glassNav) { Appearance.setGlassNav(appearanceContext, it) }
+                ToggleRow("Строка поиска и вкладки", null, Appearance.glassSearch) { Appearance.setGlassSearch(appearanceContext, it) }
                 ToggleRow("Мини-плеер", null, Appearance.glassMini) { Appearance.setGlassMini(appearanceContext, it) }
                 ToggleRow("Меню и действия", "Компактные всплывающие меню вместо шторок", Appearance.glassMenus) { Appearance.setGlassMenus(appearanceContext, it) }
                 ToggleRow("Карточки треков", null, Appearance.glassCards) { Appearance.setGlassCards(appearanceContext, it) }

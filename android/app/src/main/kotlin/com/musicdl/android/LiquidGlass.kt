@@ -63,17 +63,40 @@ internal fun rememberGlassBackdrop(): GlassBackdrop {
     return backdrop
 }
 
-/** Marks the content that glass elements refract. Place it on the list that scrolls under the bars. */
-internal fun Modifier.glassSource(backdrop: GlassBackdrop, enabled: Boolean): Modifier {
+/**
+ * Marks the content that glass elements refract. Place it on the list that scrolls under the bars.
+ * [edge] > 0 also lays a blurred strip, faded in towards the bottom, over the last [edge] of the list.
+ */
+internal fun Modifier.glassSource(backdrop: GlassBackdrop, enabled: Boolean, edge: androidx.compose.ui.unit.Dp = 0.dp): Modifier {
     if (!enabled) return this
-    return this
-        .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
-        .drawWithContent {
-            backdrop.layer.record {
-                this@drawWithContent.drawContent()
+    return this.composed {
+        val edgeLayer = rememberGraphicsLayer()
+        Modifier
+            .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+            .drawWithContent {
+                backdrop.layer.record {
+                    this@drawWithContent.drawContent()
+                }
+                drawLayer(backdrop.layer)
+                val edgePx = edge.toPx()
+                if (edgePx > 1f && size.height > edgePx) {
+                    val top = size.height - edgePx
+                    edgeLayer.compositingStrategy = androidx.compose.ui.graphics.layer.CompositingStrategy.Offscreen
+                    edgeLayer.record {
+                        translate(0f, -top) { drawLayer(backdrop.layer) }
+                        drawRect(
+                            Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black),
+                            blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                        )
+                    }
+                    if (Build.VERSION.SDK_INT >= 31) {
+                        val r = 10.dp.toPx()
+                        edgeLayer.renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                    }
+                    translate(0f, top) { drawLayer(edgeLayer) }
+                }
             }
-            drawLayer(backdrop.layer)
-        }
+    }
 }
 
 internal fun Modifier.glassSurface(
@@ -160,27 +183,38 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
             val dx = backdrop.origin.x - origin.x
             val dy = backdrop.origin.y - origin.y
             glassLayer.record {
-                drawRect(base.copy(alpha = 0.6f))
+                drawRect(base.copy(alpha = 0.3f))
                 translate(dx, dy) { drawLayer(backdrop.layer) }
             }
             if (cache.w != w || cache.h != h || cache.radius != radius || cache.blur != blurPx) {
                 cache.w = w; cache.h = h; cache.radius = radius; cache.blur = blurPx
+                val vibrancy = android.graphics.ColorMatrix().apply {
+                    setSaturation(1.6f)
+                    postConcat(android.graphics.ColorMatrix(floatArrayOf(
+                        1.22f, 0f, 0f, 0f, 6f,
+                        0f, 1.22f, 0f, 0f, 6f,
+                        0f, 0f, 1.22f, 0f, 6f,
+                        0f, 0f, 0f, 1f, 0f,
+                    )))
+                }
+                val blur = android.graphics.RenderEffect.createBlurEffect(blurPx, blurPx, android.graphics.Shader.TileMode.CLAMP)
+                val soft = android.graphics.RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(vibrancy), blur)
                 glassLayer.renderEffect = if (Build.VERSION.SDK_INT >= 33) {
                     val shader = cache.shader ?: RuntimeShader(GLASS_AGSL).also { cache.shader = it }
                     shader.setFloatUniform("size", w.toFloat(), h.toFloat())
                     shader.setFloatUniform("radius", radius)
                     shader.setFloatUniform("depth", depth)
                     shader.setFloatUniform("strength", 1f)
-                    val refract = android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "content")
-                    val blur = android.graphics.RenderEffect.createBlurEffect(blurPx, blurPx, android.graphics.Shader.TileMode.CLAMP)
-                    android.graphics.RenderEffect.createChainEffect(refract, blur).asComposeRenderEffect()
+                    android.graphics.RenderEffect.createChainEffect(
+                        android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "content"), soft,
+                    ).asComposeRenderEffect()
                 } else {
-                    BlurEffect(blurPx, blurPx, TileMode.Clamp)
+                    soft.asComposeRenderEffect()
                 }
             }
             drawLayer(glassLayer)
             // Frosting: the matte end of the slider lays a stronger tint over the blur.
-            drawRect(base.copy(alpha = (0.02f + 0.5f * matte).coerceAtMost(0.75f)))
+            drawRect(base.copy(alpha = (0.02f + 0.4f * matte).coerceAtMost(0.6f)))
             drawGlassRim(shape)
             drawContent()
         }

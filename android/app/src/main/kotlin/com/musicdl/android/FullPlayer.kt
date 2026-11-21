@@ -3,6 +3,7 @@ package com.musicdl.android
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -153,7 +154,14 @@ internal fun FullPlayer(
         motionScheme = androidx.compose.material3.MotionScheme.expressive(),
         shapes = MaterialTheme.shapes,
     ) {
-    Surface(Modifier.fillMaxSize(), color = surfaceColor, contentColor = PlayerInk) {
+    val styledLyrics = lyricsMode && (theme == PlayerTheme.SPOTIFY || theme == PlayerTheme.YANDEX)
+    val vivid by animateColorAsState(vividBackground(palette.seed), tween(420), label = "vividLyrics")
+    val lyricsStyle = when {
+        !styledLyrics -> LyricsStyle.DEFAULT
+        theme == PlayerTheme.SPOTIFY -> LyricsStyle.SPOTIFY
+        else -> LyricsStyle.YANDEX
+    }
+    Surface(Modifier.fillMaxSize(), color = if (styledLyrics) vivid else surfaceColor, contentColor = PlayerInk) {
         Box(Modifier.fillMaxSize()) {
             val canvas = state.player.canvas
             var canvasFailed by remember(canvas?.url) { mutableStateOf(false) }
@@ -173,7 +181,7 @@ internal fun FullPlayer(
                 }
             } else when (theme) {
                 PlayerTheme.YANDEX -> Unit
-                PlayerTheme.SPOTIFY -> SpotifyBackdrop(palette.seed)
+                PlayerTheme.SPOTIFY -> if (!lyricsMode) SpotifyBackdrop(palette.seed)
                 PlayerTheme.APPLE -> AppleBackdrop(bitmap, progress) { PlayerBackdrop(bitmap, palette, scrim = 1f - 0.45f * progress.coerceIn(0f, 1f)) }
                 else -> PlayerBackdrop(bitmap, palette)
             }
@@ -212,10 +220,15 @@ internal fun FullPlayer(
                         val side = minOf(maxWidth, maxHeight)
                         if (progress > 0.01f) {
                             LyricsCarousel(state, size, opacity,
-                                Modifier.fillMaxSize().padding(top = if (theme == PlayerTheme.APPLE) 8.dp else side / 4 + 20.dp).graphicsLayer { alpha = progress },
-                                onSeek, PlayerAccent)
+                                Modifier.fillMaxSize().padding(top = when {
+                                    theme == PlayerTheme.APPLE || lyricsStyle == LyricsStyle.SPOTIFY -> 8.dp
+                                    lyricsStyle == LyricsStyle.YANDEX -> 52.dp
+                                    else -> side / 4 + 20.dp
+                                }).graphicsLayer { alpha = progress },
+                                onSeek, PlayerAccent, lyricsStyle, lerp(palette.seed, Color.White, 0.65f))
                         }
-                        if (theme != PlayerTheme.APPLE) Box(
+                        if (lyricsStyle == LyricsStyle.YANDEX) YandexCollapseButton(hooks.onToggleLyrics, Modifier.align(Alignment.TopEnd))
+                        if (theme != PlayerTheme.APPLE && !(styledLyrics && progress > 0.95f)) Box(
                             Modifier.size(side).align(Alignment.TopCenter).graphicsLayer {
                                 val flight = kotlin.math.sin(progress.coerceIn(0f, 1f) * Math.PI).toFloat()
                                 cameraDistance = 18f * density
@@ -475,7 +488,7 @@ internal fun playerTime(ms: Long): String =
 
 @Composable
 private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, modifier: Modifier,
-                           onSeek: (Float) -> Unit, PlayerAccent: Color) {
+                           onSeek: (Float) -> Unit, PlayerAccent: Color, style: LyricsStyle = LyricsStyle.DEFAULT, tint: Color = Color.White) {
     val lyrics = state.lyrics
     when {
         state.isLyricsLoading -> Box(modifier, contentAlignment = Alignment.Center) {
@@ -485,7 +498,8 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
             Text(state.lyricsError ?: "Текст пока не найден", textAlign = TextAlign.Center, color = PlayerMuted)
         }
         lyrics.hasTimings -> BoxWithConstraints(modifier) {
-            val animated = Appearance.lyricsAnimated
+            val styled = style != LyricsStyle.DEFAULT
+            val animated = Appearance.lyricsAnimated || styled
             // A per-frame clock keeps the fill and the line changes smooth between the player's sparse position ticks.
             val clock = rememberLyricsClock(state.player.positionMs, state.player.isPlaying, state.playbackSpeed, animated)
             val lines = lyrics.lines
@@ -493,7 +507,7 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
             val active = activeState.value
             val listState = rememberLazyListState()
             // Animated mode keeps the active line near the top, like the reference; plain mode centres it.
-            val anchor = if (animated) 0.28f else 0.5f
+            val anchor = when { style == LyricsStyle.YANDEX -> 0.4f; animated -> 0.28f; else -> 0.5f }
             val topPadding = if (animated) (maxHeight * anchor - 30.dp).coerceAtLeast(0.dp) else (maxHeight / 2 - 44.dp).coerceAtLeast(0.dp)
             val bottomPadding = if (animated) maxHeight * 0.6f else topPadding
             LaunchedEffect(active, lyrics, maxHeight, size, animated) {
@@ -509,11 +523,20 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
             }
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = topPadding, bottom = bottomPadding),
-                horizontalAlignment = if (animated) Alignment.Start else Alignment.CenterHorizontally) {
+                horizontalAlignment = if (animated && style != LyricsStyle.YANDEX) Alignment.Start else Alignment.CenterHorizontally) {
                 itemsIndexed(lines) { index, line ->
                     val distance = abs(index - active)
                     val onClickLine = { onSeek((line.timeMs.toFloat() / state.player.durationMs).coerceIn(0f, 1f)) }
-                    if (animated) {
+                    if (styled) {
+                        val spotify = style == LyricsStyle.SPOTIFY
+                        val color = animateColorAsState(if (spotify && distance != 0) tint else Color.White, tween(300), label = "lyricColor").value
+                        val alpha = animateFloatAsState(if (spotify || distance == 0) 1f else (0.55f - distance * 0.1f).coerceAtLeast(0.2f), tween(300), label = "lyricAlpha")
+                        Text(line.text, fontSize = (size * if (spotify) 1.15f else 1.3f).sp, lineHeight = (size * if (spotify) 1.35f else 1.45f).sp,
+                            fontWeight = if (spotify) FontWeight.ExtraBold else FontWeight.Black, letterSpacing = (-0.5).sp,
+                            textAlign = if (spotify) TextAlign.Start else TextAlign.Center, color = color,
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = state.player.durationMs > 0, onClick = onClickLine)
+                                .padding(vertical = if (spotify) 8.dp else 10.dp).graphicsLayer { this.alpha = alpha.value })
+                    } else if (animated) {
                         // The animated values are read inside graphicsLayer, so a tween frame only redraws.
                         val scale = animateFloatAsState(if (distance == 0) 1f else 0.94f, tween(380), label = "lineScale")
                         val alpha = animateFloatAsState(if (distance == 0) 1f else (0.5f - distance * 0.06f).coerceAtLeast(0.18f), tween(380), label = "lineOpacity")
@@ -558,6 +581,8 @@ private fun LyricsCarousel(state: MusicUiState, size: Float, opacity: Float, mod
         }
     }
 }
+
+internal enum class LyricsStyle { DEFAULT, SPOTIFY, YANDEX }
 
 /** Playback position extrapolated every frame while playing; re-synced whenever the real position drifts or jumps. */
 @Composable

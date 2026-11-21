@@ -28,6 +28,8 @@ import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.CloseFullscreen
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -76,6 +78,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.drawWithContent
@@ -96,6 +99,14 @@ import kotlin.math.roundToInt
 // Brand-inspired palettes only: no logos, fonts or artwork from the services themselves.
 internal val YandexBg = Color(0xFF2B2A2D)
 internal val SpotifyBg = Color(0xFF121212)
+
+/** Lyrics screens of the Spotify and Yandex themes use one flat, saturated colour grown from the cover. */
+internal fun vividBackground(seed: Color): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(seed.toArgb(), hsv)
+    if (hsv[1] < 0.12f) { hsv[1] = 0.08f; hsv[2] = 0.3f } else { hsv[1] = hsv[1].coerceIn(0.55f, 0.85f); hsv[2] = 0.4f }
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
 
 /** Everything the themed player layouts need, so they stay out of the already huge FullPlayer. */
 internal class PlayerHooks(
@@ -169,14 +180,7 @@ internal fun AppleBackdrop(bitmap: android.graphics.Bitmap?, lyricsProgress: Flo
 @Composable
 internal fun ThemedHeader(theme: PlayerTheme, h: PlayerHooks) {
     when (theme) {
-        PlayerTheme.YANDEX -> Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = h.onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Свернуть плеер", Modifier.size(32.dp)) }
-            Text(h.subtitle, Modifier.weight(1f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            TextButton(onClick = h.onSpeed) { Text(h.speedLabel, color = PlayerInk) }
-            IconButton(onClick = h.onOpenQueue) { Icon(Icons.Rounded.QueueMusic, "Очередь") }
-        }
-        PlayerTheme.SPOTIFY -> Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+        PlayerTheme.SPOTIFY -> if (h.lyricsMode) SpotifyLyricsHeader(h) else Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = h.onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Свернуть плеер", Modifier.size(32.dp)) }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Сейчас звучит", style = MaterialTheme.typography.labelSmall, color = PlayerInk.copy(alpha = 0.85f))
@@ -184,6 +188,13 @@ internal fun ThemedHeader(theme: PlayerTheme, h: PlayerHooks) {
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = h.onOpenActions) { Icon(Icons.Rounded.MoreVert, "Действия с треком") }
+        }
+        PlayerTheme.YANDEX -> Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = h.onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Свернуть плеер", Modifier.size(32.dp)) }
+            Text(h.subtitle, Modifier.weight(1f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            TextButton(onClick = h.onSpeed) { Text(h.speedLabel, color = PlayerInk) }
+            IconButton(onClick = h.onOpenQueue) { Icon(Icons.Rounded.QueueMusic, "Очередь") }
         }
         else -> if (h.lyricsMode) AppleLyricsHeader(h) else Box(Modifier.fillMaxWidth().height(40.dp), contentAlignment = Alignment.Center) {
             Box(
@@ -261,8 +272,8 @@ internal fun ThemedSeek(theme: PlayerTheme, h: PlayerHooks) {
 @Composable
 internal fun ThemedBody(theme: PlayerTheme, h: PlayerHooks) {
     when (theme) {
-        PlayerTheme.YANDEX -> YandexBody(h)
-        PlayerTheme.SPOTIFY -> SpotifyBody(h)
+        PlayerTheme.YANDEX -> if (h.lyricsMode) YandexLyricsMiniBar(h) else YandexBody(h)
+        PlayerTheme.SPOTIFY -> if (h.lyricsMode) SpotifyLyricsBar(h) else SpotifyBody(h)
         else -> AppleBody(h)
     }
 }
@@ -418,6 +429,74 @@ private fun AppleVolume() {
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp), description = "Громкость",
         )
         Icon(Icons.Rounded.VolumeUp, null, Modifier.size(20.dp), tint = Color.White.copy(alpha = 0.7f))
+    }
+}
+
+/** Spotify lyrics: chevron back to the player, centred title and artist. */
+@Composable
+private fun SpotifyLyricsHeader(h: PlayerHooks) {
+    Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = h.onToggleLyrics) { Icon(Icons.Rounded.KeyboardArrowDown, "Вернуться к плееру", Modifier.size(32.dp)) }
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(h.title, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(h.artist, fontSize = 14.sp, color = PlayerInk.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable(onClick = h.onArtist))
+        }
+        Spacer(Modifier.size(48.dp))
+    }
+}
+
+/** Spotify lyrics footer: share and menu, a thin seek bar and one big pause button. */
+@Composable
+private fun SpotifyLyricsBar(h: PlayerHooks) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Glyph(Icons.Rounded.Share, "Поделиться", {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_TEXT, "${h.title} — ${h.artist}")
+                runCatching { context.startActivity(android.content.Intent.createChooser(send, null).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            })
+            Spacer(Modifier.weight(1f))
+            Glyph(Icons.Rounded.MoreVert, "Действия с треком", h.onOpenActions)
+        }
+        ThemedSeek(PlayerTheme.SPOTIFY, h)
+        Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
+            Surface(onClick = h.onPlayPause, shape = CircleShape, color = Color.White, modifier = Modifier.size(68.dp)) {
+                Box(contentAlignment = Alignment.Center) { PlayGlyph(h, Color.Black, 38.dp) }
+            }
+        }
+    }
+}
+
+/** Yandex lyrics: a small translucent card with the track, the heart and play. */
+@Composable
+private fun YandexLyricsMiniBar(h: PlayerHooks) {
+    Surface(shape = RoundedCornerShape(24.dp), color = Color.White.copy(alpha = 0.14f), modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.15f))) {
+                h.cover?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(h.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(h.artist, fontSize = 14.sp, color = Color.White.copy(alpha = 0.65f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(onClick = h.onArtist))
+            }
+            IconButton(onClick = h.onLike) {
+                Icon(if (h.liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Нравится",
+                    tint = if (h.liked) Color(0xFFFF4B33) else Color.White)
+            }
+            IconButton(onClick = h.onPlayPause) { PlayGlyph(h, Color.White, 30.dp) }
+        }
+    }
+}
+
+/** Round translucent "collapse" button over the Yandex lyrics. */
+@Composable
+internal fun YandexCollapseButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(onClick = onClick, shape = CircleShape, color = Color.White.copy(alpha = 0.18f),
+        modifier = modifier.size(40.dp).semantics { contentDescription = "Свернуть текст" }) {
+        Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.CloseFullscreen, null, Modifier.size(20.dp)) }
     }
 }
 

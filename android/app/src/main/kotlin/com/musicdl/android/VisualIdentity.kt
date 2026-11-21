@@ -269,25 +269,11 @@ internal fun NavigationGlyphIcon(glyph: NavigationGlyph, tint: Color, modifier: 
     }
 }
 
-/** The tab bar folded into a single circle that shows the active tab; a tap unfolds it. */
-@Composable
-internal fun CollapsedNavButton(selected: FeedTab, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val glyph = when (if (selected == FeedTab.SETTINGS) FeedTab.LIKES else selected) {
-        FeedTab.WAVE -> NavigationGlyph.WAVE
-        FeedTab.SEARCH -> NavigationGlyph.SEARCH
-        FeedTab.ARTISTS -> NavigationGlyph.ARTIST
-        else -> NavigationGlyph.LIBRARY
-    }
-    Box(
-        modifier.padding(bottom = 4.dp).size(52.dp)
-            .glassSurface(CircleShape, MaterialTheme.colorScheme.surfaceContainerHigh, true, real = true)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(Silver), contentAlignment = Alignment.Center) {
-            NavigationGlyphIcon(glyph, Vinyl)
-        }
-    }
+internal fun navGlyphOf(selected: FeedTab): NavigationGlyph = when (if (selected == FeedTab.SETTINGS) FeedTab.LIKES else selected) {
+    FeedTab.WAVE -> NavigationGlyph.WAVE
+    FeedTab.SEARCH -> NavigationGlyph.SEARCH
+    FeedTab.ARTISTS -> NavigationGlyph.ARTIST
+    else -> NavigationGlyph.LIBRARY
 }
 
 /** Height of the tab bar for the chosen size option. */
@@ -303,7 +289,7 @@ internal fun navBarHeight(): androidx.compose.ui.unit.Dp = when (Appearance.navS
  * and the slots, while a direct drag gesture lets the thumb be pulled between destinations.
  */
 @Composable
-internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, collapsed: Boolean = false) {
+internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, collapsed: Boolean = false, fold: () -> Float = { 0f }) {
     val items = listOf(
         Triple(FeedTab.WAVE, "Волна", NavigationGlyph.WAVE),
         Triple(FeedTab.SEARCH, "Поиск", NavigationGlyph.SEARCH),
@@ -428,13 +414,14 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, colla
                     .graphicsLayer {
                         scaleX = thumbScale
                         scaleY = thumbScale
+                        alpha = 1f - (fold() * 2.5f).coerceIn(0f, 1f)
                     }
                     .then(
                         if (glassNav) Modifier.glassSurface(thumbShape, Silver, true, opacity = 0.9f)
                         else Modifier.clip(thumbShape).background(Silver),
                     ),
             )
-            Row(Modifier.fillMaxSize().selectableGroup()) {
+            Row(Modifier.fillMaxSize().selectableGroup().graphicsLayer { alpha = 1f - (fold() * 2.5f).coerceIn(0f, 1f) }) {
                 items.forEachIndexed { index, (tab, label, glyph) ->
                     val active = tab == requestedTab
                     val interactions = remember { MutableInteractionSource() }

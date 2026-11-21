@@ -36,6 +36,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -378,36 +379,23 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 val glassBar = Appearance.liquidGlass && Appearance.glassNav && Appearance.navCollapse &&
                     (!miniShown || Appearance.glassMini)
                 // Scrolling down folds the tab bar into one circle and the mini player takes the rest of the row.
-                Crossfade(navCollapsed && glassBar, animationSpec = tween(220), label = "bottomBar") { folded ->
-                    if (folded) {
-                        Column {
-                            // Same total height as the unfolded bar, so the list padding never moves.
-                            val spare = navBarHeight() + (if (miniShown) 60.dp else 0.dp) - 60.dp
-                            Spacer(Modifier.height(spare.coerceAtLeast(0.dp)))
-                            Row(
-                                Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 10.dp).height(60.dp),
-                                verticalAlignment = Alignment.Bottom,
-                            ) {
-                                CollapsedNavButton(state.tab, onClick = { navCollapsed = false })
-                                if (miniShown) {
-                                    Spacer(Modifier.width(4.dp))
-                                    MiniPlayer(state, progressFlow = viewModel.playerProgress,
-                                        onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
-                                        onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
-                                        onQueue = { showQueue = true }, collapsed = true, modifier = Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            AnimatedVisibility(miniShown) {
-                                MiniPlayer(state, progressFlow = viewModel.playerProgress,
-                                    onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
-                                    onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
-                                    onQueue = { showQueue = true })
-                            }
-                            AppNavigation(state.tab, viewModel::setTab)
-                        }
+                val miniPlayer: @Composable () -> Unit = {
+                    MiniPlayer(state, progressFlow = viewModel.playerProgress,
+                        onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
+                        onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
+                        onQueue = { showQueue = true })
+                }
+                if (glassBar) {
+                    val folded = navCollapsed
+                    val fold = animateFloatAsState(
+                        if (folded) 1f else 0f,
+                        if (motionEnabled()) spring(dampingRatio = 0.88f, stiffness = 300f) else snap(), label = "barFold",
+                    )
+                    BottomBarMorph(fold, folded, miniShown, state.tab, viewModel::setTab, { navCollapsed = false }, miniPlayer)
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AnimatedVisibility(miniShown) { miniPlayer() }
+                        AppNavigation(state.tab, viewModel::setTab)
                     }
                 }
             },
@@ -441,11 +429,11 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 state = scrollStates.getValue(state.tab),
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = padding.calculateTopPadding(), bottom = if (realGlass) 0.dp else padding.calculateBottomPadding())
+                    .padding(top = if (searchOverlay) 0.dp else padding.calculateTopPadding(), bottom = if (realGlass) 0.dp else padding.calculateBottomPadding())
                     .glassSource(glassBackdrop, realGlass, edge = padding.calculateBottomPadding() + 22.dp)
                     .padding(horizontal = 18.dp),
                 contentPadding = PaddingValues(
-                    top = if (searchOverlay) with(LocalDensity.current) { searchBlockPx.toDp() } else 0.dp,
+                    top = if (searchOverlay) padding.calculateTopPadding() + with(LocalDensity.current) { searchBlockPx.toDp() } else 0.dp,
                     bottom = if (realGlass) padding.calculateBottomPadding() else 0.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -679,6 +667,13 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 item { Spacer(Modifier.height(24.dp)) }
             }
             if (searchOverlay) {
+                // The list scrolls up under the title too; it fades out smoothly instead of being cut by a dark slab.
+                val fade = MaterialTheme.colorScheme.background
+                Box(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth().height(padding.calculateTopPadding() + 16.dp).background(
+                        Brush.verticalGradient(0f to fade, 0.55f to fade.copy(alpha = 0.78f), 1f to Color.Transparent),
+                    ),
+                )
                 Column(
                     Modifier.align(Alignment.TopCenter).padding(top = padding.calculateTopPadding()).padding(horizontal = 18.dp)
                         .onSizeChanged { searchBlockPx = it.height },
@@ -712,7 +707,10 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
     Surface(
         shape = searchShape,
         color = Color.Transparent,
-        modifier = Modifier.fillMaxWidth().glassOutline(searchShape, glassSearch),
+        modifier = Modifier.fillMaxWidth().then(
+            if (Appearance.searchOverlay) Modifier.glassSurface(searchShape, MaterialTheme.colorScheme.surfaceContainerHigh, true, opacity = 0.55f, real = true)
+            else Modifier.glassOutline(searchShape, glassSearch),
+        ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextField(
@@ -1219,14 +1217,14 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
                 },
             )
             .clickable(onClick = onOpen)) {
-        if (glassMini) Row(Modifier.padding(start = 7.dp, end = 4.dp).height((52f - 10f * shrink).dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size((38f - 8f * shrink).dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+        if (glassMini) Row(Modifier.padding(start = 7.dp, end = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
                 CoverImage(song.coverUrl, Modifier.fillMaxSize()) { Icon(Icons.Rounded.MusicNote, null) }
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(song.songName ?: "Без названия", modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                if (shrink < 0.5f) Text(song.singers.orEmpty(), modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                Text(song.singers.orEmpty(), modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TransportButton(playing = state.player.isPlaying, buffering = state.player.isBuffering, compact = true, onClick = onPlayPause)

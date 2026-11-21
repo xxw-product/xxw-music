@@ -77,7 +77,7 @@ object Appearance {
     /** Real glass: blurred, refracted backdrop. On by default together with Liquid Glass; heavier on weak phones. */
     var realGlass by mutableStateOf(true); private set
     /** 0 = clear, 1 = frosted. */
-    var glassMatte by mutableStateOf(0.35f); private set
+    var glassMatte by mutableStateOf(0.25f); private set
     val realGlassActive: Boolean get() = liquidGlass && realGlass && android.os.Build.VERSION.SDK_INT >= 31
     val glassMenuActive: Boolean get() = liquidGlass && glassMenus
     var showWaveTab by mutableStateOf(true); private set
@@ -232,7 +232,7 @@ object Appearance {
         glassCards = prefs.getBoolean("glass_cards", false)
         glassMenus = prefs.getBoolean("glass_menus", true)
         realGlass = prefs.getBoolean("glass_real", true)
-        glassMatte = prefs.getFloat("glass_matte", 0.35f).coerceIn(0f, 1f)
+        glassMatte = prefs.getFloat("glass_matte", 0.25f).coerceIn(0f, 1f)
         showWaveTab = prefs.getBoolean("tab_wave", true)
         showArtistsTab = prefs.getBoolean("tab_artists", true)
         showCovers = prefs.getBoolean("covers", true)

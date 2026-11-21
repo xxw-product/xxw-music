@@ -623,18 +623,15 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
     val artistOnly = state.searchArtistOnly
     val submit = { keyboard?.hide(); if (artistOnly) viewModel.findArtist() else viewModel.search() }
     Column {
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(selected = !artistOnly && state.searchKind == SearchKind.TRACKS,
-                onClick = { viewModel.setSearchKind(SearchKind.TRACKS) }, label = { Text("Треки") })
-            FilterChip(selected = state.searchKind == SearchKind.ALBUMS,
-                onClick = { viewModel.setSearchKind(SearchKind.ALBUMS) }, label = { Text("Альбомы") })
-            FilterChip(selected = state.searchKind == SearchKind.PLAYLISTS,
-                onClick = { viewModel.setSearchKind(SearchKind.PLAYLISTS) }, label = { Text("Плейлисты") })
-            FilterChip(selected = artistOnly, onClick = { viewModel.setSearchArtistOnly(true) }, label = { Text("По исполнителю") })
-        }
+        SegmentedTabs(
+            listOf(
+                Triple("Треки", !artistOnly && state.searchKind == SearchKind.TRACKS) { viewModel.setSearchKind(SearchKind.TRACKS) },
+                Triple("Альбомы", state.searchKind == SearchKind.ALBUMS) { viewModel.setSearchKind(SearchKind.ALBUMS) },
+                Triple("Плейлисты", state.searchKind == SearchKind.PLAYLISTS) { viewModel.setSearchKind(SearchKind.PLAYLISTS) },
+                Triple("По исполнителю", artistOnly) { viewModel.setSearchArtistOnly(true) },
+            ),
+        )
+        Spacer(Modifier.height(10.dp))
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,

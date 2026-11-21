@@ -69,7 +69,7 @@ internal fun Modifier.glassSource(backdrop: GlassBackdrop, enabled: Boolean): Mo
     return this
         .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
         .drawWithContent {
-            backdrop.layer.record(this, layoutDirection, IntSize(size.width.roundToInt(), size.height.roundToInt())) {
+            backdrop.layer.record {
                 this@drawWithContent.drawContent()
             }
             drawLayer(backdrop.layer)
@@ -178,14 +178,14 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
             val h = size.height.roundToInt().coerceAtLeast(1)
             val matte = Appearance.glassMatte
             val s = Appearance.glassStrength
-            val blurPx = (1.5f + 26f * matte).dp.toPx()
+            val blurPx = (1.5f + 22f * matte).dp.toPx()
             val outline = shape.createOutline(size, layoutDirection, this)
             val radius = (outline as? Outline.Rounded)?.roundRect?.topLeftCornerRadius?.x ?: 0f
-            val depth = minOf(size.height / 2f, 22.dp.toPx())
+            val depth = minOf(size.height / 2f, 26.dp.toPx())
             val dx = backdrop.origin.x - origin.x
             val dy = backdrop.origin.y - origin.y
-            glassLayer.record(this, layoutDirection, IntSize(w, h)) {
-                drawRect(base)
+            glassLayer.record {
+                drawRect(base.copy(alpha = 0.6f))
                 translate(dx, dy) { drawLayer(backdrop.layer) }
             }
             val key = listOf(w.toFloat(), h.toFloat(), radius, depth, blurPx, s)
@@ -206,7 +206,7 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
             }
             drawLayer(glassLayer)
             // Frosting: the matte end of the slider lays a stronger tint over the blur.
-            drawRect(base.copy(alpha = (0.04f + 0.55f * matte).coerceAtMost(0.8f)))
+            drawRect(base.copy(alpha = (0.02f + 0.5f * matte).coerceAtMost(0.75f)))
             drawGlassRim(shape, s)
             drawContent()
         }

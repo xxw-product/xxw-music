@@ -388,8 +388,8 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
             )
             Box(
                 Modifier.align(Alignment.CenterStart)
-                    .offset { androidx.compose.ui.unit.IntOffset(visualStartPx.roundToInt(), 0) }
-                    .width(indicatorWidth).height(thumbHeight)
+                    .offset { androidx.compose.ui.unit.IntOffset(visualStartPx.roundToInt() + if (glassNav) 6.dp.roundToPx() else 0, 0) }
+                    .width(if (glassNav) indicatorWidth - 12.dp else indicatorWidth).height(thumbHeight)
                     .graphicsLayer {
                         scaleX = thumbScale
                         scaleY = thumbScale
@@ -818,7 +818,8 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                     Text("Прозрачное", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Матовое", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Slider(Appearance.glassMatte, { Appearance.setGlassMatte(appearanceContext, it) }, valueRange = 0f..1f)
+                Slider(Appearance.glassMatte, { Appearance.setGlassMatte(appearanceContext, it) }, valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(thumbColor = Silver, activeTrackColor = Silver, inactiveTrackColor = Color(0xFF3A3D44)))
                 Text("Сила эффекта", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ChoiceChips(listOf(0.6f to "Мягко", 1f to "Обычно", 1.4f to "Ярко"), Appearance.glassStrength) { Appearance.setGlassStrength(appearanceContext, it) }
                 ToggleRow("Нижняя панель", null, Appearance.glassNav) { Appearance.setGlassNav(appearanceContext, it) }

@@ -165,7 +165,7 @@ internal fun FullPlayer(
         Box(Modifier.fillMaxSize()) {
             val canvas = state.player.canvas
             var canvasFailed by remember(canvas?.url) { mutableStateOf(false) }
-            if (canvas != null && !canvasFailed && !branded) {
+            if (canvas != null && !canvasFailed && !styledLyrics) {
                 Box(Modifier.fillMaxSize()) {
                     ClipVideo(canvas, onError = { canvasFailed = true }, modifier = Modifier.fillMaxSize())
                     // Canvas is decoration: a dark scrim keeps the title and controls readable.

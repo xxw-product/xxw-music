@@ -141,6 +141,12 @@ abstract class BaseMusicClient(protected val config: MusicClientConfig) {
     open suspend fun searchArtist(name: String, progress: SearchProgress = NoSearchProgress): List<SongInfo> =
         search(name, progress = progress).filter { com.musicdl.core.model.ArtistIdentity.matches(it, name) }
 
+    /** Albums or playlists matching [query]; sources without a collection catalog return nothing. */
+    open suspend fun searchCollections(query: String, kind: CollectionKind, limit: Int = 12): List<MusicCollection> = emptyList()
+
+    /** Tracks of one collection, without file links (those are resolved when a track is played). */
+    open suspend fun collectionTracks(collection: MusicCollection): List<SongInfo> = emptyList()
+
     open fun parsePlaylist(playlistUrl: String): List<SongInfo> =
         throw UnsupportedOperationException("Not supported now to parse playlist from $source")
 

@@ -32,6 +32,28 @@ open class DeezerMusicClient(config: MusicClientConfig) : BaseMusicClient(config
 
     override val source = "DeezerMusicClient"
 
+    override suspend fun searchCollections(query: String, kind: CollectionKind, limit: Int): List<MusicCollection> {
+        val path = if (kind == CollectionKind.ALBUM) "album" else "playlist"
+        val body = http.get("https://api.deezer.com/search/$path",
+            query = mapOf("q" to query, "limit" to limit.toString()), extraHeaders = searchHeaders)?.use { it.textOrNull() }
+        return CollectionParsing.deezerCollections(body, kind, source)
+    }
+
+    override suspend fun collectionTracks(collection: MusicCollection): List<SongInfo> {
+        val path = if (collection.kind == CollectionKind.ALBUM) "album" else "playlist"
+        var url: String? = "https://api.deezer.com/$path/${collection.id}/tracks?limit=100"
+        val all = mutableListOf<SongInfo>()
+        var pages = 0
+        while (url != null && pages < 10) {
+            val body = http.get(url, extraHeaders = searchHeaders)?.use { it.textOrNull() } ?: break
+            val (tracks, next) = CollectionParsing.deezerTracks(body, collection)
+            all += tracks
+            url = next
+            pages++
+        }
+        return all.distinctBy { it.identifier }
+    }
+
     /** Mirrors that answered with a usable link before; tried first, and only once per client. */
     private val workingMirrors = java.util.concurrent.CopyOnWriteArrayList<String>()
 
@@ -242,6 +264,31 @@ open class DeezerMusicClient(config: MusicClientConfig) : BaseMusicClient(config
 class SoundCloudMusicClient(config: MusicClientConfig) : BaseMusicClient(config) {
 
     override val source = "SoundCloudMusicClient"
+
+    override suspend fun searchCollections(query: String, kind: CollectionKind, limit: Int): List<MusicCollection> {
+        val cid = ensureClientId() ?: return emptyList()
+        val path = if (kind == CollectionKind.ALBUM) "albums" else "playlists_without_albums"
+        val body = http.get("https://api-v2.soundcloud.com/search/$path",
+            query = mapOf("q" to query, "client_id" to cid, "limit" to limit.toString(), "app_locale" to "en"),
+            extraHeaders = searchHeaders)?.use { it.textOrNull() }
+        return CollectionParsing.soundCloudCollections(body, kind, source)
+    }
+
+    override suspend fun collectionTracks(collection: MusicCollection): List<SongInfo> {
+        val cid = ensureClientId() ?: return emptyList()
+        val body = http.get("https://api-v2.soundcloud.com/playlists/${collection.id}",
+            query = mapOf("client_id" to cid, "representation" to "full"), extraHeaders = searchHeaders)
+            ?.use { it.textOrNull() } ?: return emptyList()
+        // Long playlists list most entries as bare ids; fetch those in batches of 30.
+        val extra = CollectionParsing.soundCloudStubIds(body).chunked(30).flatMap { ids ->
+            CollectionParsing.soundCloudTrackArray(
+                http.get("https://api-v2.soundcloud.com/tracks",
+                    query = mapOf("ids" to ids.joinToString(","), "client_id" to cid), extraHeaders = searchHeaders)
+                    ?.use { it.textOrNull() },
+            )
+        }
+        return CollectionParsing.soundCloudTracks(body, extra, collection)
+    }
 
     private var clientId: String? = config.defaultSearchCookies["client_id"] ?: cachedClientId
 

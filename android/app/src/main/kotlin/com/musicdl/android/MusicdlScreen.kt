@@ -40,6 +40,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -144,6 +147,7 @@ import com.musicdl.core.source.MusicClientRegistry
 @Composable
 fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    androidx.activity.compose.BackHandler(enabled = state.openCollection != null) { viewModel.closeCollection() }
     val snackbarHost = remember { SnackbarHostState() }
     // One lookup table instead of a linear scan of the download index for every visible card.
     val downloadsByKey = remember(state.downloads) { state.downloads.associateBy { it.key } }
@@ -474,7 +478,8 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                         item { WidenCard(onWiden = viewModel::widenSearch) }
                     }
 
-                    if (state.history.isNotEmpty() && state.results.isEmpty() && !state.isSearching) {
+                    if (state.history.isNotEmpty() && state.openCollection == null && !state.isSearching &&
+                        (if (state.searchKind == SearchKind.TRACKS) state.results.isEmpty() else state.collections.isEmpty())) {
                         item {
                             HistoryRow(
                                 history = state.history,
@@ -484,7 +489,50 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                         }
                     }
 
-                    if (state.results.isNotEmpty()) {
+                    val open = state.openCollection
+                    if (open != null) {
+                        item {
+                            CollectionHeader(
+                                collection = open,
+                                loading = state.isCollectionLoading,
+                                enabled = state.collectionTracks.isNotEmpty(),
+                                onBack = viewModel::closeCollection,
+                                onPlayAll = { viewModel.playAll(state.collectionTracks) },
+                                onQueue = { viewModel.addManyToQueue(state.collectionTracks) },
+                                onSave = viewModel::saveCollectionAsPlaylist,
+                            )
+                        }
+                        items(state.collectionTracks, key = { "col:${it.key()}" }) { song ->
+                            SongCard(
+                                song = song,
+                                save = state.saves[song.key()],
+                                isCurrent = state.player.song?.key() == song.key(),
+                                isPlaying = state.player.song?.key() == song.key() && state.player.isPlaying,
+                                isLiked = song.key() in state.likedKeys,
+                                isFollowed = state.isFollowedBy(song),
+                                onPlay = { viewModel.playOrToggle(song) },
+                                onFollow = { viewModel.toggleFollow(song) },
+                                onAddToPlaylist = { playlistSong = song },
+                                onSave = { viewModel.save(song) },
+                                onLike = { viewModel.toggleLike(song) },
+                                downloaded = downloadedEntry(song),
+                                onActions = { actionsSong = song },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
+                    } else if (state.searchKind != SearchKind.TRACKS) {
+                        if (state.collections.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    if (state.searchKind == SearchKind.ALBUMS) "Альбомы" else "Плейлисты",
+                                    state.collections.size,
+                                )
+                            }
+                            items(state.collections, key = { "col:${it.source}:${it.id}" }) { collection ->
+                                CollectionCard(collection, onOpen = { viewModel.openCollection(collection) }, modifier = Modifier.animateItem())
+                            }
+                        }
+                    } else if (state.results.isNotEmpty()) {
                         item { SectionHeader("Треки", state.results.size) }
                         items(state.results, key = { "res:${it.key()}" }) { song ->
                             SongCard(
@@ -519,8 +567,16 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
     val artistOnly = state.searchArtistOnly
     val submit = { keyboard?.hide(); if (artistOnly) viewModel.findArtist() else viewModel.search() }
     Column {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !artistOnly, onClick = { viewModel.setSearchArtistOnly(false) }, label = { Text("Треки") })
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(selected = !artistOnly && state.searchKind == SearchKind.TRACKS,
+                onClick = { viewModel.setSearchKind(SearchKind.TRACKS) }, label = { Text("Треки") })
+            FilterChip(selected = state.searchKind == SearchKind.ALBUMS,
+                onClick = { viewModel.setSearchKind(SearchKind.ALBUMS) }, label = { Text("Альбомы") })
+            FilterChip(selected = state.searchKind == SearchKind.PLAYLISTS,
+                onClick = { viewModel.setSearchKind(SearchKind.PLAYLISTS) }, label = { Text("Плейлисты") })
             FilterChip(selected = artistOnly, onClick = { viewModel.setSearchArtistOnly(true) }, label = { Text("По исполнителю") })
         }
     Surface(
@@ -535,7 +591,16 @@ private fun SearchBar(state: MusicUiState, viewModel: SearchViewModel) {
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { submit() }),
-                placeholder = { Text(if (artistOnly) "Имя исполнителя" else "Название трека") },
+                placeholder = {
+                    Text(
+                        when {
+                            artistOnly -> "Имя исполнителя"
+                            state.searchKind == SearchKind.ALBUMS -> "Название альбома"
+                            state.searchKind == SearchKind.PLAYLISTS -> "Название плейлиста"
+                            else -> "Название трека"
+                        },
+                    )
+                },
                 trailingIcon = {
                     if (state.keyword.isNotEmpty()) {
                         IconButton(onClick = { viewModel.onKeywordChange("") }) {
@@ -873,6 +938,89 @@ private fun NoticeCard(message: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),
         )
+    }
+}
+
+@Composable
+private fun CollectionCard(collection: com.musicdl.core.source.MusicCollection, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onOpen,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            CollectionCover(collection, Modifier.size(64.dp))
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(collection.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(
+                        collection.owner?.takeIf { it.isNotBlank() },
+                        collection.trackCount.takeIf { it > 0 }?.let { "$it тр." },
+                        collection.year?.takeIf { it.isNotBlank() },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(collection.source.removeSuffix("MusicClient"), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectionCover(collection: com.musicdl.core.source.MusicCollection, modifier: Modifier) {
+    CoverImage(collection.coverUrl, modifier.clip(RoundedCornerShape(8.dp))) {
+        Box(modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.MusicNote, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun CollectionHeader(
+    collection: com.musicdl.core.source.MusicCollection,
+    loading: Boolean,
+    enabled: Boolean,
+    onBack: () -> Unit,
+    onPlayAll: () -> Unit,
+    onQueue: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TextButton(onClick = onBack) { Text("← К результатам") }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CollectionCover(collection, Modifier.size(104.dp))
+            Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                Text(collection.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
+                collection.owner?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    listOfNotNull(
+                        if (collection.kind == com.musicdl.core.source.CollectionKind.ALBUM) "Альбом" else "Плейлист",
+                        collection.trackCount.takeIf { it > 0 }?.let { "$it тр." },
+                        collection.year?.takeIf { it.isNotBlank() },
+                        collection.source.removeSuffix("MusicClient"),
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (loading) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("  Загружаю треки…", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onPlayAll, enabled = enabled, modifier = Modifier.weight(1f)) { Text("Играть всё") }
+            FilledTonalButton(onClick = onQueue, enabled = enabled, modifier = Modifier.weight(1f)) { Text("В очередь") }
+        }
+        TextButton(onClick = onSave, enabled = enabled) { Text("Сохранить как плейлист") }
     }
 }
 

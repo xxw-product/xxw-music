@@ -107,6 +107,41 @@ class MusicClient(
         }
     }
 
+    /** Albums or playlists from every source that has a collection catalog; failures give empty lists. */
+    suspend fun searchCollections(
+        keyword: String,
+        kind: CollectionKind,
+        sourceTimeoutMs: Long = DEFAULT_SOURCE_TIMEOUT_MS,
+        onSourceResult: ((String, List<MusicCollection>) -> Unit)? = null,
+    ): Map<String, List<MusicCollection>> = withContext(Dispatchers.Default) {
+        val work = CoroutineScope(SupervisorJob() + BLOCKING)
+        try {
+            musicSources.map { source ->
+                work.async {
+                    val task = async {
+                        runCatching { clients[source]?.searchCollections(keyword, kind).orEmpty() }
+                            .onFailure { baseConfig.logger.error("MusicClient.$source.collections >>> $keyword (${it.message})") }
+                            .getOrDefault(emptyList())
+                    }
+                    val found = withTimeoutOrNull(sourceTimeoutMs) { task.await() } ?: emptyList()
+                    task.cancel()
+                    onSourceResult?.invoke(source, found)
+                    source to found
+                }
+            }.awaitAll().toMap()
+        } finally {
+            work.cancel()
+        }
+    }
+
+    /** Tracks of [collection] from the source that listed it. */
+    suspend fun collectionTracks(collection: MusicCollection, timeoutMs: Long = 25_000L): List<SongInfo> =
+        withContext(BLOCKING) {
+            val client = clients[collection.source] ?: return@withContext emptyList()
+            withTimeoutOrNull(timeoutMs) { runCatching { client.collectionTracks(collection) }.getOrDefault(emptyList()) }
+                ?: emptyList()
+        }
+
     /** Port of `MusicClient.parseplaylist`: first source that returns tracks wins. */
     suspend fun parsePlaylist(playlistUrl: String): List<SongInfo> = withContext(Dispatchers.IO) {
         for (source in musicSources) {

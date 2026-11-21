@@ -80,6 +80,11 @@ data class MusicUiState(
     val autoDownload: Boolean = false,
     val listeningCount: Int = 0,
     val searchArtistOnly: Boolean = false,
+    val searchKind: SearchKind = SearchKind.TRACKS,
+    val collections: List<com.musicdl.core.source.MusicCollection> = emptyList(),
+    val openCollection: com.musicdl.core.source.MusicCollection? = null,
+    val collectionTracks: List<SongInfo> = emptyList(),
+    val isCollectionLoading: Boolean = false,
     val playlists: List<MusicPlaylist> = emptyList(),
     val shuffle: Boolean = false,
     val repeatOne: Boolean = false,
@@ -143,6 +148,9 @@ data class MusicUiState(
 }
 
 enum class FeedTab { SEARCH, WAVE, LIKES, ARTISTS, SETTINGS }
+
+/** What the search box looks for; artist search is a separate flag on top of TRACKS. */
+enum class SearchKind { TRACKS, ALBUMS, PLAYLISTS }
 
 /** A source that has not answered in this time is abandoned so the feed keeps moving. */
 private const val SEARCH_TIMEOUT_MS = 20_000L
@@ -495,7 +503,96 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onKeywordChange(value: String) = _state.update { it.copy(keyword = value) }
-    fun setSearchArtistOnly(value: Boolean) = _state.update { it.copy(searchArtistOnly = value) }
+    fun setSearchArtistOnly(value: Boolean) = _state.update {
+        it.copy(searchArtistOnly = value, searchKind = if (value) SearchKind.TRACKS else it.searchKind)
+    }
+
+    fun setSearchKind(kind: SearchKind) = _state.update {
+        it.copy(searchKind = kind, searchArtistOnly = false, openCollection = null, collectionTracks = emptyList(), error = null)
+    }
+
+    /** Albums or playlists matching the query, grouped per source and streamed in as each one answers. */
+    private fun searchCollections(keyword: String) {
+        val kind = if (_state.value.searchKind == SearchKind.ALBUMS) com.musicdl.core.source.CollectionKind.ALBUM
+        else com.musicdl.core.source.CollectionKind.PLAYLIST
+        val noun = if (kind == com.musicdl.core.source.CollectionKind.ALBUM) "альбомы" else "плейлисты"
+        library.lastKeyword = keyword
+        library.pushHistory(keyword)
+        _state.update {
+            it.copy(
+                isSearching = true, collections = emptyList(), openCollection = null, collectionTracks = emptyList(),
+                error = null, tab = FeedTab.SEARCH, history = library.history(), results = emptyList(),
+                progressText = "Ищу $noun…", progressCompleted = 0, progressTotal = 0,
+            )
+        }
+        viewModelScope.launch {
+            val sources = _state.value.activeSources
+            val client = buildClient(sources)
+            val words = keyword.lowercase().split(' ').filter { it.isNotBlank() }
+            fun score(c: com.musicdl.core.source.MusicCollection): Int {
+                val hay = (c.title + " " + c.owner.orEmpty()).lowercase()
+                return words.count { it in hay } * 2 + if (c.title.lowercase().contains(keyword.lowercase())) 3 else 0
+            }
+            try {
+                val bySource = client.searchCollections(keyword, kind, SEARCH_TIMEOUT_MS) { source, found ->
+                    if (found.isNotEmpty()) _state.update {
+                        it.copy(
+                            collections = (it.collections + found).sortedByDescending(::score),
+                            progressText = "${source.removeSuffix("MusicClient")}: +${found.size}",
+                        )
+                    }
+                }
+                val flat = bySource.values.flatten().distinctBy { it.source to it.id }.sortedByDescending(::score)
+                _state.update {
+                    it.copy(
+                        isSearching = false, collections = flat,
+                        progressText = if (flat.isEmpty()) "Ничего не найдено" else "Найдено: ${flat.size}",
+                        error = if (flat.isEmpty()) "Среди включённых источников нет подходящих $noun. Альбомы и плейлисты ищут Deezer и SoundCloud." else null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                _state.update { it.copy(isSearching = false, error = err.message ?: "Поиск не удался") }
+            } finally {
+                withContext(Dispatchers.IO) { client.close() }
+            }
+        }
+    }
+
+    fun openCollection(collection: com.musicdl.core.source.MusicCollection) {
+        _state.update { it.copy(openCollection = collection, collectionTracks = emptyList(), isCollectionLoading = true, error = null) }
+        viewModelScope.launch {
+            val client = buildClient(setOf(collection.source))
+            try {
+                val tracks = client.collectionTracks(collection)
+                if (_state.value.openCollection?.id != collection.id) return@launch
+                _state.update {
+                    it.copy(
+                        collectionTracks = tracks, isCollectionLoading = false,
+                        error = if (tracks.isEmpty()) "Не удалось загрузить треки" else null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                _state.update { it.copy(isCollectionLoading = false, error = err.message ?: "Не удалось загрузить треки") }
+            } finally {
+                withContext(Dispatchers.IO) { client.close() }
+            }
+        }
+    }
+
+    fun closeCollection() = _state.update { it.copy(openCollection = null, collectionTracks = emptyList(), isCollectionLoading = false, error = null) }
+
+    /** Keeps the album or playlist as the user's own playlist; its tracks resolve to a stream when played. */
+    fun saveCollectionAsPlaylist() {
+        val collection = _state.value.openCollection ?: return
+        val tracks = _state.value.collectionTracks.takeIf { it.isNotEmpty() } ?: return
+        val name = (collection.owner?.takeIf { it.isNotBlank() }?.let { "$it — " }.orEmpty() + collection.title).take(100)
+        updatePlaylists(library.playlists() + MusicPlaylist(java.util.UUID.randomUUID().toString(), name).copy(tracks = tracks))
+        _messages.tryEmit("Плейлист сохранён: ${tracks.size}")
+    }
 
     fun setTab(tab: FeedTab) {
         library.tab = tab
@@ -544,6 +641,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun search() {
         val keyword = _state.value.keyword.trim()
         if (keyword.isEmpty() || _state.value.isSearching) return
+        if (_state.value.searchKind != SearchKind.TRACKS) { searchCollections(keyword); return }
 
         library.lastKeyword = keyword
         library.pushHistory(keyword)
@@ -1112,6 +1210,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         playGeneration++
         refreshJob?.cancel()
         refreshAttempted = false
+        if (song.downloadUrl.isNullOrBlank() && library.localFileFor(song) == null) {
+            // Album and playlist rows carry no file link: resolve one now, then start.
+            player.stop()
+            _state.update { it.copy(player = PlayerUiState(song = song, isBuffering = true, positionMs = startAtMs)) }
+            refreshPlayback(song, startAtMs)
+            return
+        }
         startPlayback(song, startAtMs)
     }
 
@@ -1208,7 +1313,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             togglePlayPause()
         } else {
             val visible = with(_state.value) {
-                when (tab) { FeedTab.SEARCH -> results; FeedTab.WAVE -> wave; FeedTab.LIKES -> likes; FeedTab.ARTISTS -> artistTracks; FeedTab.SETTINGS -> emptyList() }
+                when (tab) { FeedTab.SEARCH -> if (openCollection != null) collectionTracks else results; FeedTab.WAVE -> wave; FeedTab.LIKES -> likes; FeedTab.ARTISTS -> artistTracks; FeedTab.SETTINGS -> emptyList() }
             }
             setQueue(song, visible)
             play(song)

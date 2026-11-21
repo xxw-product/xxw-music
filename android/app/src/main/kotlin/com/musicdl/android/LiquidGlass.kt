@@ -223,5 +223,5 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
 
 /** Light see-through outline for controls that sit on the plain page background: no filled slab behind them. */
 internal fun Modifier.glassOutline(shape: Shape, glass: Boolean): Modifier =
-    if (glass) this.clip(shape).background(Color.White.copy(alpha = 0.05f)).border(1.dp, Color.White.copy(alpha = 0.16f), shape)
+    if (glass) this.clip(shape).border(1.dp, Color.White.copy(alpha = 0.16f), shape)
     else this.clip(shape).border(1.dp, Color.White.copy(alpha = 0.10f), shape)

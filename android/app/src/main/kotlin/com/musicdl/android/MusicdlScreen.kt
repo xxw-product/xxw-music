@@ -369,7 +369,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 }
             },
             bottomBar = {
-                Column {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     // The wave tab has its own player card; two players on one page look wrong.
                     val waveCardShown = state.tab == FeedTab.WAVE && !state.isWaveLoading &&
                         state.player.song?.let { current -> state.wave.any { it.key() == current.key() } } == true
@@ -377,7 +377,7 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                         MiniPlayer(state, progressFlow = viewModel.playerProgress,
                             onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
                             onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
-                            onQueue = { showQueue = true })
+                            onQueue = { showQueue = true }, collapsed = navCollapsed)
                     }
                     AppNavigation(state.tab, viewModel::setTab, collapsed = navCollapsed)
                 }
@@ -390,12 +390,19 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 navCollapsed = false
                 var lastIndex = activeList.firstVisibleItemIndex
                 var lastOffset = activeList.firstVisibleItemScrollOffset
+                var travel = 0f          // scrolled in one direction since it last changed
+                var lastSwitch = 0L
                 snapshotFlow { activeList.firstVisibleItemIndex to activeList.firstVisibleItemScrollOffset }.collect { (index, offset) ->
-                    val delta = (index - lastIndex) * 1000 + (offset - lastOffset)
-                    if (index == 0 && offset < 40) navCollapsed = false
-                    else if (delta > 24) navCollapsed = true
-                    else if (delta < -24) navCollapsed = false
+                    val delta = ((index - lastIndex) * 1000 + (offset - lastOffset)).toFloat()
                     lastIndex = index; lastOffset = offset
+                    travel = if (delta * travel < 0f) delta else travel + delta
+                    val now = android.os.SystemClock.uptimeMillis()
+                    // A real swipe is needed to flip the bar, and it may not flip again at once: no flicker on flings.
+                    val ready = now - lastSwitch > 450L
+                    if (index == 0 && offset < 40) {
+                        if (navCollapsed) { navCollapsed = false; lastSwitch = now }
+                    } else if (ready && travel > 140f && !navCollapsed) { navCollapsed = true; lastSwitch = now; travel = 0f }
+                    else if (ready && travel < -90f && navCollapsed) { navCollapsed = false; lastSwitch = now; travel = 0f }
                 }
             }
             LazyColumn(
@@ -1125,7 +1132,7 @@ private fun SectionHeader(title: String, count: Int) {
  */
 @Composable
 private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOpen: () -> Unit,
-                       onPlayPause: () -> Unit, onNext: () -> Unit, onQueue: () -> Unit) {
+                       onPlayPause: () -> Unit, onNext: () -> Unit, onQueue: () -> Unit, collapsed: Boolean = false) {
     val song = state.player.song ?: return
     val playbackProgress by progressFlow.collectAsStateWithLifecycle()
     val density = LocalDensity.current
@@ -1141,8 +1148,13 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
     val progress = (-pull / maxPull).coerceIn(0f, 1f)
     val glassMini = Appearance.liquidGlass && Appearance.glassMini
     val miniShape = if (glassMini) CircleShape else MaterialTheme.shapes.medium
+    val shrink by animateFloatAsState(
+        if (collapsed && glassMini && Appearance.navCollapse) 1f else 0f,
+        spring(dampingRatio = 0.85f, stiffness = 400f), label = "miniShrink",
+    )
+    val card: @Composable () -> Unit = {
     Surface(color = if (glassMini) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh, shape = miniShape,
-        modifier = Modifier.padding(horizontal = if (glassMini) 16.dp else 12.dp, vertical = 4.dp).fillMaxWidth()
+        modifier = Modifier.padding(horizontal = if (glassMini) 16.dp else 12.dp, vertical = 4.dp).fillMaxWidth(1f - 0.26f * shrink)
             .glassSurface(miniShape, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini, real = true)
             .graphicsLayer {
                 translationY = pull * 0.45f
@@ -1161,14 +1173,14 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
                 },
             )
             .clickable(onClick = onOpen)) {
-        if (glassMini) Row(Modifier.padding(start = 7.dp, end = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+        if (glassMini) Row(Modifier.padding(start = 7.dp, end = 4.dp).height((52f - 10f * shrink).dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size((38f - 8f * shrink).dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
                 CoverImage(song.coverUrl, Modifier.fillMaxSize()) { Icon(Icons.Rounded.MusicNote, null) }
             }
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(song.songName ?: "Без названия", modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Text(song.singers.orEmpty(), modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                if (shrink < 0.5f) Text(song.singers.orEmpty(), modifier = Modifier.basicMarquee(), softWrap = false, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TransportButton(playing = state.player.isPlaying, buffering = state.player.isBuffering, compact = true, onClick = onPlayPause)
@@ -1196,6 +1208,9 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
             LinearProgressIndicator(progress = { playbackProgress }, modifier = Modifier.fillMaxWidth().height(2.dp))
         }
     }
+    }
+    // The glass capsule keeps a fixed slot, so shrinking it never changes the bottom padding of the list.
+    if (glassMini) Box(Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.BottomCenter) { card() } else card()
 }
 
 /** Four bars bouncing while audio plays — the expressive take on a "now playing" indicator. */

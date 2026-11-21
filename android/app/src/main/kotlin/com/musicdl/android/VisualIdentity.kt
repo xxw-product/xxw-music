@@ -328,9 +328,9 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, colla
     }
 
     // One continuous spring: a new target only retargets the animation, it never restarts it.
-    LaunchedEffect(targetIndex, trackWidthPx, totalWeight) {
-        if (trackWidthPx <= 0f) return@LaunchedEffect
-        val target = targetIndex / totalWeight * trackWidthPx
+    // The position is kept as a share of the bar, so the bar shrinking never leaves the thumb behind.
+    LaunchedEffect(targetIndex, totalWeight) {
+        val target = targetIndex / totalWeight
         if (!laidOut || !motion) {
             thumbPosition.snapTo(target)
             laidOut = true
@@ -387,7 +387,7 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, colla
         ) {
             // The thumb always owns three of the six width units, so switching tabs never re-sizes it.
             val indicatorWidth = maxWidth * 3f / totalWeight
-            val visualStartPx = thumbPosition.value
+            val visualStart = thumbPosition.value
             val thumbScale by animateFloatAsState(
                 targetValue = if (dragging) 1.025f else 1f,
                 animationSpec = if (motion) spring(dampingRatio = 0.72f, stiffness = 520f) else snap(),
@@ -395,7 +395,7 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit, colla
             )
             Box(
                 Modifier.align(Alignment.CenterStart)
-                    .offset { androidx.compose.ui.unit.IntOffset(visualStartPx.roundToInt() + 6.dp.roundToPx(), 0) }
+                    .offset { androidx.compose.ui.unit.IntOffset((visualStart * trackWidthPx).roundToInt() + 6.dp.roundToPx(), 0) }
                     .width(indicatorWidth - 12.dp).height(thumbHeight)
                     .graphicsLayer {
                         scaleX = thumbScale

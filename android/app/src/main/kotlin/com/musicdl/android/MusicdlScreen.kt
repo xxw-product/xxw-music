@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -362,24 +364,51 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                             Icon(Icons.Rounded.Tune, "Источники поиска")
                         }
                     }
-                    if (state.tab == FeedTab.SEARCH) {
+                    if (state.tab == FeedTab.SEARCH && !Appearance.searchOverlay) {
                         SearchBar(state, viewModel)
                         Spacer(Modifier.height(12.dp))
                     }
                 }
             },
             bottomBar = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    // The wave tab has its own player card; two players on one page look wrong.
-                    val waveCardShown = state.tab == FeedTab.WAVE && !state.isWaveLoading &&
-                        state.player.song?.let { current -> state.wave.any { it.key() == current.key() } } == true
-                    AnimatedVisibility(state.player.song != null && !waveCardShown) {
-                        MiniPlayer(state, progressFlow = viewModel.playerProgress,
-                            onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
-                            onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
-                            onQueue = { showQueue = true }, collapsed = navCollapsed)
+                // The wave tab has its own player card; two players on one page look wrong.
+                val waveCardShown = state.tab == FeedTab.WAVE && !state.isWaveLoading &&
+                    state.player.song?.let { current -> state.wave.any { it.key() == current.key() } } == true
+                val miniShown = state.player.song != null && !waveCardShown
+                val glassBar = Appearance.liquidGlass && Appearance.glassNav && Appearance.navCollapse &&
+                    (!miniShown || Appearance.glassMini)
+                // Scrolling down folds the tab bar into one circle and the mini player takes the rest of the row.
+                Crossfade(navCollapsed && glassBar, animationSpec = tween(220), label = "bottomBar") { folded ->
+                    if (folded) {
+                        Column {
+                            // Same total height as the unfolded bar, so the list padding never moves.
+                            val spare = navBarHeight() + (if (miniShown) 60.dp else 0.dp) - 60.dp
+                            Spacer(Modifier.height(spare.coerceAtLeast(0.dp)))
+                            Row(
+                                Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 10.dp).height(60.dp),
+                                verticalAlignment = Alignment.Bottom,
+                            ) {
+                                CollapsedNavButton(state.tab, onClick = { navCollapsed = false })
+                                if (miniShown) {
+                                    Spacer(Modifier.width(4.dp))
+                                    MiniPlayer(state, progressFlow = viewModel.playerProgress,
+                                        onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
+                                        onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
+                                        onQueue = { showQueue = true }, collapsed = true, modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            AnimatedVisibility(miniShown) {
+                                MiniPlayer(state, progressFlow = viewModel.playerProgress,
+                                    onOpen = { fullPlayerLyrics = false; showFullPlayer = true },
+                                    onPlayPause = viewModel::togglePlayPause, onNext = viewModel::playNext,
+                                    onQueue = { showQueue = true })
+                            }
+                            AppNavigation(state.tab, viewModel::setTab)
+                        }
                     }
-                    AppNavigation(state.tab, viewModel::setTab, collapsed = navCollapsed)
                 }
             },
         ) { padding ->
@@ -405,6 +434,9 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                     else if (ready && travel < -90f && navCollapsed) { navCollapsed = false; lastSwitch = now; travel = 0f }
                 }
             }
+            val searchOverlay = Appearance.searchOverlay && state.tab == FeedTab.SEARCH
+            var searchBlockPx by remember { mutableIntStateOf(0) }
+            Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 state = scrollStates.getValue(state.tab),
                 modifier = Modifier
@@ -412,7 +444,10 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                     .padding(top = padding.calculateTopPadding(), bottom = if (realGlass) 0.dp else padding.calculateBottomPadding())
                     .glassSource(glassBackdrop, realGlass, edge = padding.calculateBottomPadding() + 22.dp)
                     .padding(horizontal = 18.dp),
-                contentPadding = PaddingValues(bottom = if (realGlass) padding.calculateBottomPadding() else 0.dp),
+                contentPadding = PaddingValues(
+                    top = if (searchOverlay) with(LocalDensity.current) { searchBlockPx.toDp() } else 0.dp,
+                    bottom = if (realGlass) padding.calculateBottomPadding() else 0.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (state.tab == FeedTab.WAVE) {
@@ -642,6 +677,16 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 }
 
                 item { Spacer(Modifier.height(24.dp)) }
+            }
+            if (searchOverlay) {
+                Column(
+                    Modifier.align(Alignment.TopCenter).padding(top = padding.calculateTopPadding()).padding(horizontal = 18.dp)
+                        .onSizeChanged { searchBlockPx = it.height },
+                ) {
+                    SearchBar(state, viewModel)
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
             }
         }
     }
@@ -1132,7 +1177,8 @@ private fun SectionHeader(title: String, count: Int) {
  */
 @Composable
 private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOpen: () -> Unit,
-                       onPlayPause: () -> Unit, onNext: () -> Unit, onQueue: () -> Unit, collapsed: Boolean = false) {
+                       onPlayPause: () -> Unit, onNext: () -> Unit, onQueue: () -> Unit, collapsed: Boolean = false,
+                       modifier: Modifier = Modifier) {
     val song = state.player.song ?: return
     val playbackProgress by progressFlow.collectAsStateWithLifecycle()
     val density = LocalDensity.current
@@ -1154,7 +1200,7 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
     )
     val card: @Composable () -> Unit = {
     Surface(color = if (glassMini) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh, shape = miniShape,
-        modifier = Modifier.padding(horizontal = if (glassMini) 16.dp else 12.dp, vertical = 4.dp).fillMaxWidth(1f - 0.26f * shrink)
+        modifier = Modifier.padding(horizontal = if (glassMini) 16.dp else 12.dp, vertical = 4.dp).fillMaxWidth()
             .glassSurface(miniShape, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini, real = true)
             .graphicsLayer {
                 translationY = pull * 0.45f
@@ -1210,7 +1256,7 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
     }
     }
     // The glass capsule keeps a fixed slot, so shrinking it never changes the bottom padding of the list.
-    if (glassMini) Box(Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.BottomCenter) { card() } else card()
+    if (glassMini) Box(modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.BottomCenter) { card() } else card()
 }
 
 /** Four bars bouncing while audio plays — the expressive take on a "now playing" indicator. */

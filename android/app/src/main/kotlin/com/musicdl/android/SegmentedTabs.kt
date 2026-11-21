@@ -47,7 +47,8 @@ internal fun SegmentedTabs(options: List<Triple<String, Boolean, () -> Unit>>, m
     Row(
         modifier
             .then(
-                Modifier.glassOutline(CircleShape, glass),
+                if (Appearance.searchOverlay) Modifier.glassSurface(CircleShape, container, true, opacity = 0.55f, real = true)
+                else Modifier.glassOutline(CircleShape, glass),
             )
             .horizontalScroll(rememberScrollState())
             .padding(4.dp)

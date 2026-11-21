@@ -221,6 +221,9 @@ private fun Modifier.realGlass(shape: Shape, base: Color, opacity: Float): Modif
         }
 }
 
+/** The search controls float over the list and refract it, like the bottom bar. */
+internal val Appearance.searchOverlay: Boolean get() = liquidGlass && glassSearch && realGlassActive
+
 /** Light see-through outline for controls that sit on the plain page background: no filled slab behind them. */
 internal fun Modifier.glassOutline(shape: Shape, glass: Boolean): Modifier =
     if (glass) this.clip(shape).border(1.dp, Color.White.copy(alpha = 0.16f), shape)

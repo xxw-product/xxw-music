@@ -210,10 +210,10 @@ internal fun VinylSeekBar(value: Float, enabled: Boolean, onChange: (Float) -> U
     }
 }
 
-private enum class NavigationGlyph { WAVE, SEARCH, LIBRARY, ARTIST, SETTINGS }
+internal enum class NavigationGlyph { WAVE, SEARCH, LIBRARY, ARTIST, SETTINGS }
 
 @Composable
-private fun NavigationGlyphIcon(glyph: NavigationGlyph, tint: Color, modifier: Modifier = Modifier) {
+internal fun NavigationGlyphIcon(glyph: NavigationGlyph, tint: Color, modifier: Modifier = Modifier) {
     Canvas(modifier.size(33.dp)) {
         val stroke = Stroke(width = 3.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
         when (glyph) {
@@ -267,6 +267,34 @@ private fun NavigationGlyphIcon(glyph: NavigationGlyph, tint: Color, modifier: M
             }
         }
     }
+}
+
+/** The tab bar folded into a single circle that shows the active tab; a tap unfolds it. */
+@Composable
+internal fun CollapsedNavButton(selected: FeedTab, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val glyph = when (if (selected == FeedTab.SETTINGS) FeedTab.LIKES else selected) {
+        FeedTab.WAVE -> NavigationGlyph.WAVE
+        FeedTab.SEARCH -> NavigationGlyph.SEARCH
+        FeedTab.ARTISTS -> NavigationGlyph.ARTIST
+        else -> NavigationGlyph.LIBRARY
+    }
+    Box(
+        modifier.padding(bottom = 4.dp).size(52.dp)
+            .glassSurface(CircleShape, MaterialTheme.colorScheme.surfaceContainerHigh, true, real = true)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(40.dp).clip(CircleShape).background(Silver), contentAlignment = Alignment.Center) {
+            NavigationGlyphIcon(glyph, Vinyl)
+        }
+    }
+}
+
+/** Height of the tab bar for the chosen size option. */
+internal fun navBarHeight(): androidx.compose.ui.unit.Dp = when (Appearance.navSize) {
+    "compact" -> if (Appearance.navLabels == "all") 64.dp else 56.dp
+    "large" -> 76.dp
+    else -> 64.dp
 }
 
 /**

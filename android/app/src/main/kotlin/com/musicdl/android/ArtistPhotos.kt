@@ -128,6 +128,38 @@ object ArtistPhotos {
         }.getOrNull()
     }
 
+    /** Big portrait and popularity for an artist page. */
+    data class Profile(val photo: String?, val fans: Long)
+
+    private val profiles = ConcurrentHashMap<String, Profile>()
+
+    suspend fun profile(context: Context, name: String): Profile? {
+        val key = Wave.key(name)
+        if (key.length < 2) return null
+        profiles[key]?.let { return it }
+        val found = withContext(Dispatchers.IO) { runCatching { fetchProfile(name) }.getOrNull() } ?: return null
+        profiles[key] = found
+        return found
+    }
+
+    private fun fetchProfile(name: String): Profile? {
+        for (candidate in candidates(name)) {
+            val body = get("https://api.deezer.com/search/artist?q=${URLEncoder.encode(candidate, "UTF-8")}&limit=5") ?: continue
+            val data = JSONObject(body).optJSONArray("data") ?: continue
+            val wanted = Wave.key(candidate)
+            for (i in 0 until data.length()) {
+                val item = data.getJSONObject(i)
+                if (Wave.key(item.optString("name")) != wanted) continue
+                val picture = item.optString("picture_xl").ifBlank { item.optString("picture_big") }
+                return Profile(
+                    photo = picture.takeIf { it.isNotBlank() && !it.contains("/images/artist//") },
+                    fans = item.optLong("nb_fan"),
+                )
+            }
+        }
+        return null
+    }
+
     /** An artist found by name, for the cards above search results. */
     data class Hit(val name: String, val photo: String?, val fans: Long)
 

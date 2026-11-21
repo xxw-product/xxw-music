@@ -1376,6 +1376,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     /** Play a list from the top, e.g. the whole "Нравится" playlist. */
     fun playAll(songs: List<SongInfo>) = startQueue(songs, 0)
 
+    fun playShuffled(songs: List<SongInfo>) { if (songs.isNotEmpty()) startQueue(songs.shuffled(), 0) }
+
+    /** Album search for an artist's name, from the artist page. */
+    fun searchAlbumsOfArtist(name: String) {
+        _state.update { it.copy(keyword = name, searchKind = SearchKind.ALBUMS, searchArtistOnly = false, openCollection = null) }
+        setTab(FeedTab.SEARCH)
+        search()
+    }
+
     private fun advanceQueue(automatic: Boolean = false) {
         if (playbackQueue.isEmpty) return
         // With shuffle on, "next" walks the shuffled order instead of picking a new random index.

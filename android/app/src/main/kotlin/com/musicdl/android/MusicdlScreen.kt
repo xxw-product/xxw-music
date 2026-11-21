@@ -432,13 +432,17 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                         }
                     } else {
                         item {
-                            ArtistHeader(
+                            ArtistHero(
                                 name = artist,
                                 following = state.followedArtists.any { it.equals(artist, ignoreCase = true) },
                                 loading = state.isArtistLoading,
+                                trackCount = state.artistTracks.size,
                                 onBack = viewModel::closeArtist,
                                 onRefresh = { viewModel.openArtist(artist) },
-                                onUnfollow = { viewModel.toggleFollowName(artist) },
+                                onFollow = { viewModel.toggleFollowName(artist) },
+                                onPlay = { viewModel.playAll(state.artistTracks) },
+                                onShuffle = { viewModel.playShuffled(state.artistTracks) },
+                                onAlbums = { viewModel.searchAlbumsOfArtist(artist) },
                             )
                         }
                         if (state.isArtistLoading && state.artistTracks.isEmpty()) {

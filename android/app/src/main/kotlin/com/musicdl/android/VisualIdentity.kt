@@ -291,6 +291,7 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
     }
     val barRadius = when (Appearance.navShape) { "square" -> 10.dp; "soft" -> 22.dp; else -> barHeight / 2 }
     val floating = Appearance.navFloating
+    val glassNav = Appearance.liquidGlass && Appearance.glassNav
     val barShape = if (floating) RoundedCornerShape(barRadius) else RoundedCornerShape(topStart = barRadius, topEnd = barRadius)
     val thumbHeight = barHeight - 12.dp
     val thumbShape = RoundedCornerShape((barRadius - 6.dp).coerceAtLeast(4.dp))
@@ -344,8 +345,11 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
             Modifier.fillMaxWidth().height(barHeight)
                 .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
                 .clip(barShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .border(if (floating) 1.dp else 0.dp, MaterialTheme.colorScheme.outlineVariant, barShape)
+                .then(
+                    if (glassNav) Modifier.glassSurface(barShape, MaterialTheme.colorScheme.surfaceContainerHigh, true)
+                    else Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .border(if (floating) 1.dp else 0.dp, MaterialTheme.colorScheme.outlineVariant, barShape),
+                )
                 .draggable(
                     state = rememberDraggableState { delta ->
                         val unitPx = trackWidthPx / totalWeight
@@ -390,8 +394,10 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
                         scaleX = thumbScale
                         scaleY = thumbScale
                     }
-                    .clip(thumbShape)
-                    .background(Silver),
+                    .then(
+                        if (glassNav) Modifier.glassSurface(thumbShape, Silver, true, opacity = 0.9f)
+                        else Modifier.clip(thumbShape).background(Silver),
+                    ),
             )
             Row(Modifier.fillMaxSize().selectableGroup()) {
                 items.forEachIndexed { index, (tab, label, glyph) ->
@@ -799,6 +805,16 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             Text("Общее", style = MaterialTheme.typography.titleSmall)
             ToggleRow("Чёрный фон", "Чистый чёрный вместо тёмно-серого, экономит заряд на OLED", Appearance.blackBackground) { Appearance.setBlackBackground(appearanceContext, it) }
             ToggleRow("Анимации интерфейса", "Пружинки панели, переходы и эффекты", Appearance.uiAnimations) { Appearance.setUiAnimations(appearanceContext, it) }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Liquid Glass", style = MaterialTheme.typography.titleSmall)
+            ToggleRow("Стеклянные элементы", "Полупрозрачные панели с бликами и светлой кромкой", Appearance.liquidGlass) { Appearance.setLiquidGlass(appearanceContext, it) }
+            if (Appearance.liquidGlass) {
+                Text("Сила эффекта", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ChoiceChips(listOf(0.6f to "Мягко", 1f to "Обычно", 1.4f to "Ярко"), Appearance.glassStrength) { Appearance.setGlassStrength(appearanceContext, it) }
+                ToggleRow("Нижняя панель", null, Appearance.glassNav) { Appearance.setGlassNav(appearanceContext, it) }
+                ToggleRow("Мини-плеер", null, Appearance.glassMini) { Appearance.setGlassMini(appearanceContext, it) }
+                ToggleRow("Карточки треков", null, Appearance.glassCards) { Appearance.setGlassCards(appearanceContext, it) }
+            }
         }
 
         SettingsGroup("Перенос музыки") {

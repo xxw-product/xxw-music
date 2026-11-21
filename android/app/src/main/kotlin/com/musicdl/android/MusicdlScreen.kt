@@ -1113,8 +1113,10 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
         label = "miniPlayerPull",
     )
     val progress = (-pull / maxPull).coerceIn(0f, 1f)
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
+    val glassMini = Appearance.liquidGlass && Appearance.glassMini
+    Surface(color = if (glassMini) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth()
+            .glassSurface(MaterialTheme.shapes.medium, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini)
             .graphicsLayer {
                 translationY = pull * 0.45f
                 scaleX = 1f + 0.035f * progress
@@ -1221,11 +1223,13 @@ private fun SongCard(
     } else {
         MaterialTheme.colorScheme.surfaceContainerLow
     }
+    val glassCard = Appearance.liquidGlass && Appearance.glassCards
     Surface(
         shape = MaterialTheme.shapes.large,
-        color = container,
+        color = if (glassCard) Color.Transparent else container,
         modifier = modifier
             .fillMaxWidth()
+            .glassSurface(MaterialTheme.shapes.large, container, glassCard)
             .clickable(onClick = onPlay),
     ) {
         Row(

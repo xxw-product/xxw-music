@@ -67,6 +67,12 @@ object Appearance {
     var navSize by mutableStateOf("normal"); private set      // compact | normal | large
     var navShape by mutableStateOf("round"); private set      // round | soft | square
     var navFloating by mutableStateOf(true); private set
+    /** Liquid glass is opt-in: the classic XXW look stays the default. */
+    var liquidGlass by mutableStateOf(false); private set
+    var glassStrength by mutableStateOf(1f); private set
+    var glassNav by mutableStateOf(true); private set
+    var glassMini by mutableStateOf(true); private set
+    var glassCards by mutableStateOf(false); private set
     var showWaveTab by mutableStateOf(true); private set
     var showArtistsTab by mutableStateOf(true); private set
 
@@ -169,6 +175,11 @@ object Appearance {
     fun setNavLabels(context: Context, v: String) { navLabels = v; prefs(context).edit().putString("nav_labels", v).apply() }
     fun setNavSize(context: Context, v: String) { navSize = v; prefs(context).edit().putString("nav_size", v).apply() }
     fun setNavShape(context: Context, v: String) { navShape = v; prefs(context).edit().putString("nav_shape", v).apply() }
+    fun setLiquidGlass(context: Context, on: Boolean) { liquidGlass = on; prefs(context).edit().putBoolean("glass", on).apply() }
+    fun setGlassStrength(context: Context, v: Float) { glassStrength = v; prefs(context).edit().putFloat("glass_strength", v).apply() }
+    fun setGlassNav(context: Context, on: Boolean) { glassNav = on; prefs(context).edit().putBoolean("glass_nav", on).apply() }
+    fun setGlassMini(context: Context, on: Boolean) { glassMini = on; prefs(context).edit().putBoolean("glass_mini", on).apply() }
+    fun setGlassCards(context: Context, on: Boolean) { glassCards = on; prefs(context).edit().putBoolean("glass_cards", on).apply() }
     fun setNavFloating(context: Context, on: Boolean) { navFloating = on; prefs(context).edit().putBoolean("nav_floating", on).apply() }
     fun setShowWaveTab(context: Context, on: Boolean) { showWaveTab = on; prefs(context).edit().putBoolean("tab_wave", on).apply() }
     fun setShowArtistsTab(context: Context, on: Boolean) { showArtistsTab = on; prefs(context).edit().putBoolean("tab_artists", on).apply() }
@@ -204,6 +215,11 @@ object Appearance {
         navSize = prefs.getString("nav_size", "normal").orEmpty()
         navShape = prefs.getString("nav_shape", "round").orEmpty()
         navFloating = prefs.getBoolean("nav_floating", true)
+        liquidGlass = prefs.getBoolean("glass", false)
+        glassStrength = prefs.getFloat("glass_strength", 1f).coerceIn(0.5f, 1.5f)
+        glassNav = prefs.getBoolean("glass_nav", true)
+        glassMini = prefs.getBoolean("glass_mini", true)
+        glassCards = prefs.getBoolean("glass_cards", false)
         showWaveTab = prefs.getBoolean("tab_wave", true)
         showArtistsTab = prefs.getBoolean("tab_artists", true)
         showCovers = prefs.getBoolean("covers", true)

@@ -323,6 +323,8 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 ),
             ),
     ) {
+        val glassBackdrop = rememberGlassBackdrop()
+        val realGlass = Appearance.realGlassActive
         Scaffold(
             containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHost) },
@@ -377,8 +379,10 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                 state = scrollStates.getValue(state.tab),
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
+                    .padding(top = padding.calculateTopPadding(), bottom = if (realGlass) 0.dp else padding.calculateBottomPadding())
+                    .glassSource(glassBackdrop, realGlass)
                     .padding(horizontal = 18.dp),
+                contentPadding = PaddingValues(bottom = if (realGlass) padding.calculateBottomPadding() else 0.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (state.tab == FeedTab.WAVE) {
@@ -1116,7 +1120,7 @@ private fun MiniPlayer(state: MusicUiState, progressFlow: StateFlow<Float>, onOp
     val glassMini = Appearance.liquidGlass && Appearance.glassMini
     Surface(color = if (glassMini) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth()
-            .glassSurface(MaterialTheme.shapes.medium, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini)
+            .glassSurface(MaterialTheme.shapes.medium, MaterialTheme.colorScheme.surfaceContainerHigh, glassMini, real = true)
             .graphicsLayer {
                 translationY = pull * 0.45f
                 scaleX = 1f + 0.035f * progress

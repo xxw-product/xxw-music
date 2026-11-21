@@ -346,7 +346,7 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
                 .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
                 .clip(barShape)
                 .then(
-                    if (glassNav) Modifier.glassSurface(barShape, MaterialTheme.colorScheme.surfaceContainerHigh, true)
+                    if (glassNav) Modifier.glassSurface(barShape, MaterialTheme.colorScheme.surfaceContainerHigh, true, real = true)
                     else Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .border(if (floating) 1.dp else 0.dp, MaterialTheme.colorScheme.outlineVariant, barShape),
                 )
@@ -809,6 +809,16 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
             Text("Liquid Glass", style = MaterialTheme.typography.titleSmall)
             ToggleRow("Стеклянные элементы", "Полупрозрачные панели с бликами и светлой кромкой", Appearance.liquidGlass) { Appearance.setLiquidGlass(appearanceContext, it) }
             if (Appearance.liquidGlass) {
+                ToggleRow(
+                    "Настоящее жидкое стекло",
+                    if (android.os.Build.VERSION.SDK_INT >= 31) "Размытие и преломление фона. На слабых телефонах лучше выключить" else "Нужен Android 12 или новее",
+                    Appearance.realGlass && android.os.Build.VERSION.SDK_INT >= 31,
+                ) { if (android.os.Build.VERSION.SDK_INT >= 31) Appearance.setRealGlass(appearanceContext, it) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Прозрачное", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Матовое", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Slider(Appearance.glassMatte, { Appearance.setGlassMatte(appearanceContext, it) }, valueRange = 0f..1f)
                 Text("Сила эффекта", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ChoiceChips(listOf(0.6f to "Мягко", 1f to "Обычно", 1.4f to "Ярко"), Appearance.glassStrength) { Appearance.setGlassStrength(appearanceContext, it) }
                 ToggleRow("Нижняя панель", null, Appearance.glassNav) { Appearance.setGlassNav(appearanceContext, it) }

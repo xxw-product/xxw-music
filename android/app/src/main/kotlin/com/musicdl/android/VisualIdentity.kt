@@ -458,7 +458,6 @@ internal fun AppNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
     var confirm by rememberSaveable { mutableStateOf(false) }
     var confirmCovers by rememberSaveable { mutableStateOf(false) }
-    var yandexToken by rememberSaveable { mutableStateOf(state.yandexToken) }
     var qobuzAppId by rememberSaveable { mutableStateOf(state.qobuzAppId) }
     var qobuzSecret by rememberSaveable { mutableStateOf(state.qobuzAppSecret) }
     var qobuzUserToken by rememberSaveable { mutableStateOf(state.qobuzToken) }
@@ -840,32 +839,6 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             state.linkImportResult?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-        }
-
-        SettingsGroup("Перенос из аккаунта Яндекса") {
-            Text("Лайки, плейлисты, исполнители и альбомы", style = MaterialTheme.typography.titleMedium)
-            Text("Только для всей медиатеки нужен токен аккаунта. Для публичного плейлиста используйте ссылку в разделе «Музыкальные сервисы» выше — без токена. Треки сопоставляются с каталогом XXW Music; спорные версии попадают в плейлист «Перенос · требует проверки», ненайденные показываются списком.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(
-                value = yandexToken,
-                onValueChange = { yandexToken = it },
-                label = { Text("Токен Яндекс Музыки") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(enabled = yandexToken.isNotBlank() && !state.isImporting,
-                    onClick = { model.setYandexToken(yandexToken); model.importYandexMusic() }) {
-                    Text(if (state.isImporting) "Переносим…" else "Начать перенос")
-                }
-                if (state.isImporting) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Silver)
-                    Text(state.importProgress, Modifier.padding(start = 10.dp),
-                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Text("Импорт только читает ваш аккаунт. Плейлисты создаются как ссылки на треки каталога, файлы Яндекса не копируются.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
 
         SettingsGroup("Офлайн") {

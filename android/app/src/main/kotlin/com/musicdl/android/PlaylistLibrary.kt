@@ -139,12 +139,12 @@ internal fun PlaylistLibrary(state: MusicUiState, model: SearchViewModel, onClos
                                 }
                                 if (!playlist.imported) Box {
                                     IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Действия с треком") }
-                                    DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                                        DropdownMenuItem(text = { Text("Выше") }, enabled = index > 0,
+                                    AppMenu(menu, onDismiss = { menu = false }) {
+                                        AppMenuItem("Выше", Icons.Rounded.KeyboardArrowUp, enabled = index > 0,
                                             onClick = { model.moveInPlaylist(playlist.id, song.key(), -1); menu = false })
-                                        DropdownMenuItem(text = { Text("Ниже") }, enabled = index < playlist.tracks.lastIndex,
+                                        AppMenuItem("Ниже", Icons.Rounded.KeyboardArrowDown, enabled = index < playlist.tracks.lastIndex,
                                             onClick = { model.moveInPlaylist(playlist.id, song.key(), 1); menu = false })
-                                        DropdownMenuItem(text = { Text("Убрать из плейлиста") },
+                                        AppMenuItem("Убрать из плейлиста", Icons.Rounded.DeleteOutline, danger = true,
                                             onClick = { model.removeFromPlaylist(playlist.id, song.key()); menu = false })
                                     }
                                 }

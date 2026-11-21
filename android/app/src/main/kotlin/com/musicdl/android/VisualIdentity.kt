@@ -813,6 +813,7 @@ internal fun SettingsContent(state: MusicUiState, model: SearchViewModel) {
                 ChoiceChips(listOf(0.6f to "Мягко", 1f to "Обычно", 1.4f to "Ярко"), Appearance.glassStrength) { Appearance.setGlassStrength(appearanceContext, it) }
                 ToggleRow("Нижняя панель", null, Appearance.glassNav) { Appearance.setGlassNav(appearanceContext, it) }
                 ToggleRow("Мини-плеер", null, Appearance.glassMini) { Appearance.setGlassMini(appearanceContext, it) }
+                ToggleRow("Меню и действия", "Компактные всплывающие меню вместо шторок", Appearance.glassMenus) { Appearance.setGlassMenus(appearanceContext, it) }
                 ToggleRow("Карточки треков", null, Appearance.glassCards) { Appearance.setGlassCards(appearanceContext, it) }
             }
         }

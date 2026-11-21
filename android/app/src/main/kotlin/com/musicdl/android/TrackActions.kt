@@ -78,6 +78,11 @@ internal fun TrackActionsSheet(
     onFollow: () -> Unit,
     onLyrics: () -> Unit,
 ) {
+    if (Appearance.glassMenuActive) {
+        TrackActionsGlass(song, isLiked, isFollowed, isCurrent, save, downloaded, onDismiss, onPlay, onPlayNext, onAddToQueue,
+            onLike, onDownload, onDeleteDownload, onAddToPlaylist, onFollow, onLyrics)
+        return
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,

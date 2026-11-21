@@ -73,6 +73,8 @@ object Appearance {
     var glassNav by mutableStateOf(true); private set
     var glassMini by mutableStateOf(true); private set
     var glassCards by mutableStateOf(false); private set
+    var glassMenus by mutableStateOf(true); private set
+    val glassMenuActive: Boolean get() = liquidGlass && glassMenus
     var showWaveTab by mutableStateOf(true); private set
     var showArtistsTab by mutableStateOf(true); private set
 
@@ -179,6 +181,7 @@ object Appearance {
     fun setGlassStrength(context: Context, v: Float) { glassStrength = v; prefs(context).edit().putFloat("glass_strength", v).apply() }
     fun setGlassNav(context: Context, on: Boolean) { glassNav = on; prefs(context).edit().putBoolean("glass_nav", on).apply() }
     fun setGlassMini(context: Context, on: Boolean) { glassMini = on; prefs(context).edit().putBoolean("glass_mini", on).apply() }
+    fun setGlassMenus(context: Context, on: Boolean) { glassMenus = on; prefs(context).edit().putBoolean("glass_menus", on).apply() }
     fun setGlassCards(context: Context, on: Boolean) { glassCards = on; prefs(context).edit().putBoolean("glass_cards", on).apply() }
     fun setNavFloating(context: Context, on: Boolean) { navFloating = on; prefs(context).edit().putBoolean("nav_floating", on).apply() }
     fun setShowWaveTab(context: Context, on: Boolean) { showWaveTab = on; prefs(context).edit().putBoolean("tab_wave", on).apply() }
@@ -220,6 +223,7 @@ object Appearance {
         glassNav = prefs.getBoolean("glass_nav", true)
         glassMini = prefs.getBoolean("glass_mini", true)
         glassCards = prefs.getBoolean("glass_cards", false)
+        glassMenus = prefs.getBoolean("glass_menus", true)
         showWaveTab = prefs.getBoolean("tab_wave", true)
         showArtistsTab = prefs.getBoolean("tab_artists", true)
         showCovers = prefs.getBoolean("covers", true)

@@ -122,13 +122,7 @@ fun VpnMenuButton(onOpenSettings: () -> Unit, tint: Color, modifier: Modifier = 
                 dot?.let { Box(Modifier.align(Alignment.TopEnd).size(9.dp).clip(CircleShape).background(it)) }
             }
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            shape = RoundedCornerShape(22.dp),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.widthIn(min = 280.dp, max = 330.dp),
-        ) {
+        val menuContent: @Composable () -> Unit = {
             when (page) {
                 VpnMenuPage.MAIN -> {
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -191,6 +185,17 @@ fun VpnMenuButton(onOpenSettings: () -> Unit, tint: Color, modifier: Modifier = 
                 }
             }
         }
+        if (Appearance.glassMenuActive) {
+            GlassMenuPopup(expanded, { expanded = false }, width = 300.dp) { menuContent() }
+        } else {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                shape = RoundedCornerShape(22.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.widthIn(min = 280.dp, max = 330.dp),
+            ) { menuContent() }
+        }
     }
 }
 
@@ -204,6 +209,10 @@ private fun MenuRow(
     trailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+    if (Appearance.glassMenuActive) {
+        GlassMenuItem(title, icon, danger, enabled, trailing, onClick)
+        return
+    }
     val color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     DropdownMenuItem(
         text = { Text(title, color = color, fontWeight = if (bold || danger) FontWeight.Bold else FontWeight.SemiBold,

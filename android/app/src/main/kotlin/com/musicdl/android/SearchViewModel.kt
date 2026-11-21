@@ -82,6 +82,7 @@ data class MusicUiState(
     val searchArtistOnly: Boolean = false,
     val searchKind: SearchKind = SearchKind.TRACKS,
     val collections: List<com.musicdl.core.source.MusicCollection> = emptyList(),
+    val artistHits: List<ArtistPhotos.Hit> = emptyList(),
     val openCollection: com.musicdl.core.source.MusicCollection? = null,
     val collectionTracks: List<SongInfo> = emptyList(),
     val isCollectionLoading: Boolean = false,
@@ -508,7 +509,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setSearchKind(kind: SearchKind) = _state.update {
-        it.copy(searchKind = kind, searchArtistOnly = false, openCollection = null, collectionTracks = emptyList(), error = null)
+        it.copy(searchKind = kind, searchArtistOnly = false, openCollection = null, collectionTracks = emptyList(), error = null, artistHits = emptyList())
     }
 
     /** Albums or playlists matching the query, grouped per source and streamed in as each one answers. */
@@ -645,6 +646,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
         library.lastKeyword = keyword
         library.pushHistory(keyword)
+        loadArtistHits(keyword)
 
         _state.update {
             it.copy(
@@ -1570,6 +1572,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     /** «Что у него нового»: the same engine search, but for one artist and full tracks only. */
     private var artistJob: Job? = null
+    private var artistHitsJob: Job? = null
+
+    /** Artist cards for the query; independent of the track search, so a slow lookup never delays tracks. */
+    private fun loadArtistHits(keyword: String) {
+        artistHitsJob?.cancel()
+        _state.update { it.copy(artistHits = emptyList()) }
+        artistHitsJob = viewModelScope.launch {
+            val hits = ArtistPhotos.search(keyword)
+            if (_state.value.keyword.trim() == keyword) _state.update { it.copy(artistHits = hits) }
+        }
+    }
     private var artistGeneration = 0
 
     fun findArtist() {

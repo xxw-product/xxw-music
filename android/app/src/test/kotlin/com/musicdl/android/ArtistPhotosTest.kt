@@ -10,4 +10,12 @@ class ArtistPhotosTest {
         assertEquals(listOf("Drake feat. Rihanna", "Drake"), ArtistPhotos.candidates("Drake feat. Rihanna"))
         assertEquals(listOf("A, B", "A"), ArtistPhotos.candidates("A, B"))
     }
+
+    @Test
+    fun cardsNeedEveryQueryWordInTheName() {
+        assertEquals(true, ArtistPhotos.matches("daft punk", listOf("daft")))
+        assertEquals(true, ArtistPhotos.matches("daft punk", listOf("punk", "daft")))
+        assertEquals(false, ArtistPhotos.matches("daft punk", listOf("daft", "club")))
+        assertEquals(false, ArtistPhotos.matches("daft punk", emptyList()))
+    }
 }

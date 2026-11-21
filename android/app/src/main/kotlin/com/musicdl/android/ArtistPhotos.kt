@@ -74,6 +74,41 @@ object ArtistPhotos {
         }.getOrNull()
     }
 
+    /** An artist found by name, for the cards above search results. */
+    data class Hit(val name: String, val photo: String?, val fans: Long)
+
+    private val searches = ConcurrentHashMap<String, List<Hit>>()
+
+    /**
+     * Artists whose name matches [query] (all query words appear in the name), most popular first.
+     * Photos found on the way are remembered, so the avatars on the cards render instantly.
+     */
+    suspend fun search(query: String, limit: Int = 6): List<Hit> {
+        val key = Wave.key(query)
+        if (key.length < 2) return emptyList()
+        searches[key]?.let { return it }
+        val hits = withContext(Dispatchers.IO) {
+            runCatching {
+                val body = get("https://api.deezer.com/search/artist?q=${URLEncoder.encode(query.trim(), "UTF-8")}&limit=12") ?: return@runCatching null
+                val data = JSONObject(body).optJSONArray("data") ?: return@runCatching emptyList<Hit>()
+                val words = key.split(' ').filter { it.isNotBlank() }
+                (0 until data.length()).map(data::getJSONObject).mapNotNull { item ->
+                    val name = item.optString("name").trim()
+                    if (name.isEmpty() || !matches(Wave.key(name), words)) return@mapNotNull null
+                    val picture = item.optString("picture_big").ifBlank { item.optString("picture_medium") }
+                    Hit(name, picture.takeIf { it.isNotBlank() && !it.contains("/images/artist//") }, item.optLong("nb_fan"))
+                }.distinctBy { Wave.key(it.name) }.sortedByDescending { it.fans }.take(limit)
+            }.getOrNull()
+        } ?: return emptyList()   // a failed lookup is not cached
+        hits.forEach { hit -> hit.photo?.let { memory.putIfAbsent(Wave.key(hit.name), it) } }
+        searches[key] = hits
+        return hits
+    }
+
+    /** Every query word must occur in the artist name; word order does not matter. */
+    internal fun matches(nameKey: String, words: List<String>): Boolean =
+        words.isNotEmpty() && words.all { it in nameKey }
+
     /** Full credit first, then the first name of "A, B" / "A feat. B" style credits. */
     internal fun candidates(name: String): List<String> {
         val first = name.split(Regex("""\s*(?:,|;|/|&|\bfeat\.?\b|\bft\.?\b|\bx\b)\s*""", RegexOption.IGNORE_CASE))

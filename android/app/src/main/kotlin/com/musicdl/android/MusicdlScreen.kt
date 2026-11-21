@@ -539,8 +539,23 @@ fun MusicdlScreen(viewModel: SearchViewModel = viewModel()) {
                                 CollectionCard(collection, onOpen = { viewModel.openCollection(collection) }, modifier = Modifier.animateItem())
                             }
                         }
-                    } else if (state.results.isNotEmpty()) {
-                        item { SectionHeader("Треки", state.results.size) }
+                    } else if (state.results.isNotEmpty() || state.artistHits.isNotEmpty()) {
+                        if (state.artistHits.isNotEmpty()) {
+                            item { SectionHeader("Исполнители", state.artistHits.size) }
+                            item {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    items(state.artistHits, key = { "hit:${it.name}" }) { hit ->
+                                        ArtistHitCard(
+                                            hit = hit,
+                                            following = state.followedArtists.any { it.equals(hit.name, ignoreCase = true) },
+                                            onOpen = { viewModel.setTab(FeedTab.ARTISTS); viewModel.openArtist(hit.name) },
+                                            onFollow = { viewModel.toggleFollow(SongInfo(singers = hit.name)) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (state.results.isNotEmpty()) item { SectionHeader("Треки", state.results.size) }
                         items(state.results, key = { "res:${it.key()}" }) { song ->
                             SongCard(
                                 song = song,
@@ -1334,6 +1349,35 @@ private fun HistoryRow(
 private fun MusicUiState.isFollowedBy(song: SongInfo): Boolean {
     val artist = song.singers?.trim().orEmpty()
     return artist.isNotEmpty() && followedArtists.any { it.equals(artist, ignoreCase = true) }
+}
+
+@Composable
+private fun ArtistHitCard(hit: ArtistPhotos.Hit, following: Boolean, onOpen: () -> Unit, onFollow: () -> Unit) {
+    Surface(
+        onClick = onOpen,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.width(132.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            ArtistAvatar(hit.name, 76.dp)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                hit.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.height(40.dp),
+            )
+            if (following) {
+                FilledTonalButton(onClick = onFollow, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)) {
+                    Text("В подписках", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                }
+            } else {
+                OutlinedButton(onClick = onFollow, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)) {
+                    Text("Подписаться", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                }
+            }
+        }
+    }
 }
 
 @Composable
